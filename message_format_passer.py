@@ -4,37 +4,46 @@ import json
 from message_format import MessageFormat
 
 LENGTH_LIMIT = 65536
-
+RECEIVE_CHUNK_TIMEOUT = 15.0
+RECEIVE_ACTUAL_MESSAGE_TIMEOUT = 20.0
 
 
 class MessageFormatPasser:
     """This class handles sending and receiving MessageFormat objects over a TCP socket."""
-    def __init__(self, sock: socket.socket | None = None, host: str | None = None, port: int | None = None, timeout: float | None = None) -> None:
-        if sock is not None:
-            self.sock = sock
-        elif host is not None and port is not None:
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.sock.connect((host, port))
-        else:
-            raise ValueError("Either sock or both host and port must be provided")
+    def __init__(self, sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM), timeout: float | None = None) -> None:
+        self.sock = sock
         if timeout is not None:
-            self.sock.settimeout(timeout)
-            
+            if timeout <= 0:
+                raise ValueError("Timeout must be positive")
+        self.timeout = timeout
+        self.sock.settimeout(timeout)
+
+    def connect(self, host: str = "127.0.0.1", port: int = 21354) -> None:
+        self.sock.connect((host, port))
+
+    def settimeout(self, timeout: float) -> None:
+        if timeout <= 0:
+            raise ValueError("Timeout must be positive")
+        self.timeout = timeout
+        self.sock.settimeout(timeout)
+
     def send_args(self, msgfmt: MessageFormat, *args) -> None:
         json_data = msgfmt.to_json(*args)
         # Prefix the JSON data with its length (4 bytes, network byte order)
         sending_data = struct.pack('!I', len(json_data)) + json_data.encode('utf-8')
         print(f"Sending message: {sending_data}")
-        self.sock.sendall(sending_data)
+        self.sock.send(sending_data)
 
     def read_exactly(self, num_bytes: int) -> bytes:
         """Read exactly num_bytes from self.sock."""
-        data = b''
+        data = self.sock.recv(num_bytes)
+        self.sock.settimeout(None)
         while len(data) < num_bytes:
             chunk = self.sock.recv(num_bytes - len(data))
             if not chunk:
                 raise ConnectionError("Connection closed")
             data += chunk
+        self.sock.settimeout(self.timeout)
         return data
 
     def receive_args(self, msgfmt: MessageFormat) -> list:
@@ -51,6 +60,7 @@ class MessageFormatPasser:
             raise ValueError("Received message exceeds length limit")
         
         # Now read the actual message data
+        self.sock.settimeout(None)
         json_data = self.read_exactly(message_length).decode("utf-8")
         print(f"Received message: {json_data}")
         return msgfmt.to_arg_list(json_data)
