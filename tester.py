@@ -13,3 +13,5 @@ json_str = test_format.to_json("update_score", "play\'234\"123\'234\"er1", {"sco
 #json_str = '{"action": "update_score", "username": "play\"123\"er1", "score": 100, "extra_field": "ignored"}'
 action, username, data = test_format.to_arg_list(json_str)
 print(action, username, data)
+
+print(*[1, 2, 3])

@@ -25,6 +25,11 @@ class Protocols:
             "action": str,
             "data": dict
         })
+        """
+        collection: e.g., 'user', 'room', 'gamelog' \n
+        action: e.g., 'create', 'read', 'update', 'delete', 'query' \n
+        data: additional data as a dictionary
+        """
 
     class DBToLobby:
         RESPONSE = MessageFormat({
@@ -110,6 +115,7 @@ class Words:
         ROOM_DISBANDED = "room_disbanded"
         INVITE_RECEIVED = "invite_received"
         GAME_STARTED = "game_started"
+        SERVER_SHUTDOWN = "server_shutdown"
     class ConnectionType:
         CLIENT = "client"
         DATABASE_SERVER = "database_server"

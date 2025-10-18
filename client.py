@@ -10,8 +10,10 @@ class Client:
         self.game_msgfmt_passer = MessageFormatPasser(timeout=1.0)
         self.temp_username: str | None = None
         self.user_info = UserInfo()
-        self.listen_thread = threading.Thread(target=self.listen_for_messages, daemon=True)
-        self.stop_listening_event = threading.Event()
+        self.listen_thread = threading.Thread(target=self.listen_for_messages)
+        self.get_event_thread = threading.Thread(target=self.listen_for_events)
+        self.shutdown_event = threading.Event()
+        self.fatal_error_event = threading.Event()
         self.response_queue = queue.Queue()
         self.event_queue = queue.Queue()
 
@@ -23,11 +25,19 @@ class Client:
         if result != Words.Result.CONFIRMED:
             raise ConnectionError(f"Handshake failed: {message}")
         self.listen_thread.start()
+        self.get_event_thread.start()
 
     def close(self) -> None:
-        self.stop_listening_event.set()
-        self.listen_thread.join()
-        self.send_to_lobby(Words.Command.EXIT, {})
+        self.shutdown_event.set()
+        current = threading.current_thread()
+        if self.listen_thread is not None and self.listen_thread.is_alive() and self.listen_thread is not current:
+            self.listen_thread.join()
+        if self.get_event_thread is not None and self.get_event_thread.is_alive() and self.get_event_thread is not current:
+            self.get_event_thread.join()
+        try:
+            self.send_to_lobby(Words.Command.EXIT, {})
+        except Exception:
+            pass
         self.lobby_msgfmt_passer.close()
         self.game_msgfmt_passer.close()
 
@@ -35,7 +45,7 @@ class Client:
         self.lobby_msgfmt_passer.send_args(Protocols.ClientToLobby.COMMAND, command, params)
 
     def listen_for_messages(self) -> None:
-        while not self.stop_listening_event.is_set():
+        while not self.shutdown_event.is_set():
             try:
                 msg = self.lobby_msgfmt_passer.receive_args(Protocols.LobbyToClient.MESSAGE)
                 self.handle_message(msg)
@@ -43,15 +53,33 @@ class Client:
                 continue
             except Exception as e:
                 print(f"Error listening for messages: {e}")
-                try:
-                    self.lobby_msgfmt_passer.close()
-                except Exception:
-                    pass
-                try:
-                    self.game_msgfmt_passer.close()
-                except Exception:
-                    pass
-                break
+                # try:
+                #     self.lobby_msgfmt_passer.close()
+                # except Exception:
+                #     pass
+                # try:
+                #     self.game_msgfmt_passer.close()
+                # except Exception:
+                #     pass
+                self.fatal_error_event.set()
+
+    def listen_for_events(self) -> None:
+        while not self.shutdown_event.is_set():
+            try:
+                event_list = self.get_event(timeout=1.0)
+                if event_list is not None:
+                    event_type, data = event_list
+                    print(f"Received event: {event_type} with data: {data}")
+                    self.handle_event(event_type, data)
+            except Exception as e:
+                print(f"Error listening for events: {e}")
+                self.fatal_error_event.set()
+
+    def handle_event(self, event_type: str, data: dict) -> None:
+        print(f"Handling event: {event_type} with data: {data}")
+        if event_type == Words.EventType.SERVER_SHUTDOWN:
+            print("Server is shutting down. Closing client.")
+            self.close()
 
     def handle_message(self, msg: list) -> None:
         message_type, responding_command, event_type, result, data = msg

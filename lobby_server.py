@@ -4,6 +4,7 @@ from user_info import UserInfo
 import threading
 import socket
 import time
+import queue
 
 class LobbyServer:
     def __init__(self) -> None:
@@ -14,7 +15,9 @@ class LobbyServer:
         # self.clients: list[MessageFormatPasser] = []
         self.connections: list[MessageFormatPasser] = []
         self.user_infos: dict[MessageFormatPasser, UserInfo] = {}
+        self.db_server_passer: MessageFormatPasser | None = None
         self.shutdown_event = threading.Event()
+        self.send_to_DB_queue = queue.Queue()
         #self.accept_thread = threading.Thread(target=self.accept_connections, daemon=True)
         #self.accept_thread.start()
 
@@ -53,7 +56,25 @@ class LobbyServer:
         msgfmt_passer.close()
 
     def handle_database_server(self, msgfmt_passer: MessageFormatPasser) -> None:
-        pass
+        if self.db_server_passer is not None:
+            print("A database server is already connected. Rejecting new connection.")
+            msgfmt_passer.send_args(Protocols.LobbyToConnection.HANDSHAKE_RESPONSE, Words.Result.ERROR, "Database server already connected.")
+            return
+        self.db_server_passer = msgfmt_passer
+        print("Database server connected.")
+        msgfmt_passer.send_args(Protocols.LobbyToConnection.HANDSHAKE_RESPONSE, Words.Result.CONFIRMED, "Database server connected successfully.")
+        while not self.shutdown_event.is_set():
+            if not self.send_to_DB_queue.empty():
+                request = self.send_to_DB_queue.get(timeout=1.0)
+                try:
+                    msgfmt_passer.send_args(Protocols.LobbyToDB.REQUEST, *request)
+                except queue.Empty:
+                    continue
+                except Exception as e:
+                    print(f"Error sending request to database server: {e}")
+                    break
+        self.db_server_passer = None
+        print("Database server disconnected.")
 
     def handle_game_server(self, msgfmt_passer: MessageFormatPasser) -> None:
         pass
@@ -73,6 +94,12 @@ class LobbyServer:
             except Exception as e:
                 print(f"Error handling client {msgfmt_passer}: {e}")
                 break
+
+        if self.shutdown_event.is_set():
+            msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.EVENT, "", Words.EventType.SERVER_SHUTDOWN, "", {})
+            exit_msg = msgfmt_passer.receive_args(Protocols.ClientToLobby.COMMAND)[0]
+            if exit_msg != Words.Command.EXIT:
+                print(f"Expected EXIT command, got: {exit_msg}")
         self.remove_client(msgfmt_passer)
 
     def process_message(self, msg: list, msgfmt_passer: MessageFormatPasser) -> int:
