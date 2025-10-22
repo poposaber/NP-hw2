@@ -1,6 +1,7 @@
 import pygame
 from client import Client
 import pygame.freetype
+import pygame.sysfont as sf
 
 from ui_elements import InputBox, Button, Label
 
@@ -10,6 +11,8 @@ class ClientWindow:
     def __init__(self, width=800, height=600, title="Client Window"):
         self.client = Client()
         pygame.init()
+        pygame.freetype.init()
+        sf.initsysfonts()
         self.width = width
         self.height = height
         self.title = title
@@ -19,13 +22,17 @@ class ClientWindow:
         self.running = False
 
         # font for UI elements
-        self.font = pygame.freetype.SysFont("terminal", 24)
+        self.input_font = pygame.freetype.SysFont("consolas", 18)
+        self.label_font = pygame.freetype.SysFont("consolas", 15)
+        self.caption_font = pygame.freetype.SysFont("consolas", 36)
 
         # UI elements
-        self.account_input_box = InputBox(pygame.Rect(300, 250, 200, 32), self.font, on_submit=self.focus_on_pswd_box)
-        self.password_input_box = InputBox(pygame.Rect(300, 300, 200, 32), self.font, on_submit=self.send_input)
-        self.send_button = Button(pygame.Rect(360, 350, 80, 32), "Send", self.font, callback=self.send_input)
-        self.login_label = Label((370, 150), "Login", self.font)
+        self.account_input_box = InputBox(pygame.Rect(300, 250, 200, 32), self.input_font, on_submit=self.focus_on_pswd_box)
+        self.password_input_box = InputBox(pygame.Rect(300, 325, 200, 32), self.input_font, on_submit=self.send_input)
+        self.send_button = Button(pygame.Rect(360, 400, 80, 32), "Send", self.input_font, callback=self.send_input)
+        self.login_label = Label((350, 150), "Login", self.caption_font)
+        self.account_name_label = Label((300, 235), "Username", self.label_font)
+        self.password_label = Label((300, 310), "Password", self.label_font)
 
     def send_input(self) -> None:
         print(f"Sending account: {self.account_input_box.text}")
@@ -66,6 +73,8 @@ class ClientWindow:
             self.password_input_box.draw(self.screen)
             self.send_button.draw(self.screen)
             self.login_label.draw(self.screen)
+            self.account_name_label.draw(self.screen)
+            self.password_label.draw(self.screen)
 
             pygame.display.flip()  # Update the display
             # self.clock.tick(60)  # Limit to 60 frames per second

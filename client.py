@@ -9,13 +9,80 @@ class Client:
         self.lobby_msgfmt_passer = MessageFormatPasser(timeout=1.0)
         self.game_msgfmt_passer = MessageFormatPasser(timeout=1.0)
         self.temp_username: str | None = None
-        self.user_info = UserInfo()
+        self.info = UserInfo()
         self.listen_thread = threading.Thread(target=self.listen_for_messages)
         self.get_event_thread = threading.Thread(target=self.listen_for_events)
         self.shutdown_event = threading.Event()
         self.fatal_error_event = threading.Event()
         self.response_queue = queue.Queue()
         self.event_queue = queue.Queue()
+
+    def print_prompt(self):
+        print("\n\nCommands you can type:\n")
+        if not self.info.name:
+            print("register: register an account")
+            print("login: log in an account")
+            print("exit: exit the lobby server and close.\n\n")
+            print("You are not logged in yet. Enter command: >>>>>>>>>> ", end="")
+        else:
+            print("logout: log out your account")
+            print("exit: exit the lobby server and close.\n\n")
+            print(f"{self.info.name}, enter command: >>>>>>>>>> ", end="")
+
+    def register(self):
+        pass
+
+    def login(self):
+        try:
+            username = input("Enter username: ")
+            password = input("Enter password: ")
+            self.send_to_lobby(Words.Command.LOGIN, {"username": username, "password": password})
+            response = self.get_response(timeout=5.0)
+            if response is None:
+                print("No response from server. Login failed.")
+                return
+            responding_command, result, data = response
+            if responding_command != Words.Command.LOGIN:
+                print("Unexpected response from server. Login failed.")
+                return
+            if result == Words.Result.CONFIRMED:
+                print("Login successful.")
+                self.info.name = username
+            else:
+                message = data.get("message", "Login failed.")
+                print(message)
+        except Exception as e:
+            print(f"Error during login: {e}")
+
+    def get_input(self):
+        while not self.shutdown_event.is_set():
+            try:
+                self.print_prompt()
+                cmd = input().strip().lower()
+                if not cmd:
+                    print("Please enter a valid command.")
+                    continue
+                match cmd:
+                    case "register":
+                        if self.info.name:
+                            print("Logged in users cannot register.")
+                            continue
+                        self.register()
+                    case "login":
+                        if self.info.name:
+                            print("You are already logged in.")
+                            continue
+                        self.login()
+                    case "exit":
+                        print("Exiting client.")
+                        self.close()
+                    case _:
+                        print("Unknown command. Please try again.")
+            except KeyboardInterrupt:
+                print("Exiting client.")
+                self.close()
+            except Exception as e:
+                print(f"Error getting input: {e}")
 
     def start(self, host: str = "127.0.0.1", port: int = 21354) -> None:
         self.lobby_msgfmt_passer.connect(host, port)
@@ -26,6 +93,7 @@ class Client:
             raise ConnectionError(f"Handshake failed: {message}")
         self.listen_thread.start()
         self.get_event_thread.start()
+        self.get_input()
 
     def close(self) -> None:
         self.shutdown_event.set()

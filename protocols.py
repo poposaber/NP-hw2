@@ -21,11 +21,13 @@ class Protocols:
 
     class LobbyToDB:
         REQUEST = MessageFormat({
+            "request_id": str,
             "collection": str,
             "action": str,
             "data": dict
         })
         """
+        request_id: unique identifier for the request \n
         collection: e.g., 'user', 'room', 'gamelog' \n
         action: e.g., 'create', 'read', 'update', 'delete', 'query' \n
         data: additional data as a dictionary
@@ -33,9 +35,15 @@ class Protocols:
 
     class DBToLobby:
         RESPONSE = MessageFormat({
+            "responding_request_id": str,
             "result": str,
             "data": dict
         })
+        """
+        responding_request_id: the request_id this response is for \n
+        result: 'success' or 'failure' \n
+        data: additional data as a dictionary
+        """
 
     class ClientToLobby:
         COMMAND = MessageFormat({

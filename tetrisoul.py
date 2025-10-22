@@ -1,9 +1,9 @@
-import client_window
+import client
 import os
 
-window = client_window.ClientWindow()
+c = client.Client()
 try:
-    window.run()
+    c.start()
 except Exception as e:
     print(f"Error occurred: {e}")
 os.system("pause")

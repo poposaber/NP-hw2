@@ -1,4 +1,5 @@
 from message_format import MessageFormat
+import uuid
 test_format = MessageFormat({
     "action": str,
     "username": str,
@@ -15,3 +16,4 @@ action, username, data = test_format.to_arg_list(json_str)
 print(action, username, data)
 
 print(*[1, 2, 3])
+print(uuid.uuid4().hex)

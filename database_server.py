@@ -27,8 +27,8 @@ class DatabaseServer:
     def receive_lobby_request(self) -> None:
         while not self.shutdown_event.is_set():
             try:
-                collection, action, data = self.msgfmt_passer.receive_args(Protocols.LobbyToDB.REQUEST)
-                self.process_message(collection, action, data)
+                request_id, collection, action, data = self.msgfmt_passer.receive_args(Protocols.LobbyToDB.REQUEST)
+                self.process_message(request_id, collection, action, data)
             except TimeoutError:
                 continue
             except Exception as e:
@@ -59,9 +59,18 @@ class DatabaseServer:
         self.lobby_request_receiver_thread.join()
         self.msgfmt_passer.close()
 
-    def process_message(self, collection: str, action: str, data: dict) -> None:
-        pass
+    def process_message(self, request_id: str, collection: str, action: str, data: dict) -> None:
+        if collection == Words.Collection.USER:
+            if action == Words.Action.QUERY:
+                username = data.get("username")
+                user_info = self.user_db.get(username)
+                if user_info is not None:
+                    self.send_response(request_id, Words.Result.CONFIRMED, user_info)
+                else:
+                    self.send_response(request_id, Words.Result.NOT_FOUND, {})
+            else:
+                self.send_response(request_id, Words.Result.INVALID, {"message": f"Unknown action: {action}"})
 
-    def send_response(self, result: str, data: dict) -> None:
-        self.msgfmt_passer.send_args(Protocols.DBToLobby.RESPONSE, result, data)
-        print(f"Sent response: result={result}, data={data}")
+    def send_response(self, request_id: str, result: str, data: dict) -> None:
+        self.msgfmt_passer.send_args(Protocols.DBToLobby.RESPONSE, request_id, result, data)
+        print(f"Sent response: request_id={request_id}, result={result}, data={data}")
