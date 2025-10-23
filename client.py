@@ -3,6 +3,7 @@ from protocols import Protocols, Words
 from user_info import UserInfo
 import threading
 import queue
+import getpass
 
 class Client:
     def __init__(self) -> None:
@@ -30,12 +31,54 @@ class Client:
             print(f"{self.info.name}, enter command: >>>>>>>>>> ", end="")
 
     def register(self):
-        pass
+        try:
+            while True:
+                username = input("Enter desired username (or 'Ctrl+C' to cancel): ")
+                # Send username to server to check availability
+                self.send_to_lobby(Words.Command.CHECK_USERNAME, {"username": username})
+                response = self.get_response(timeout=5.0)
+                if response is None:
+                    print("No response from server. Registration failed.")
+                    return
+                responding_command, result, data = response
+                if responding_command != Words.Command.REGISTER:
+                    print("Unexpected response from server. Registration failed.")
+                    return
+                if result == Words.Result.CONFIRMED:
+                    print("Registration successful.")
+                elif result == Words.Result.FAILURE:
+                    print("Username already taken. Please try a different one.")
+                    continue
+                else:
+                    message = data.get("message", "Registration failed.")
+                    print(message)
+                    return
+                
+                password = getpass.getpass("Enter desired password: ")
+                self.send_to_lobby(Words.Command.REGISTER, {"username": username, "password": password})
+                response = self.get_response(timeout=5.0)
+                if response is None:
+                    print("No response from server. Registration failed.")
+                    return
+                responding_command, result, data = response
+                if responding_command != Words.Command.REGISTER:
+                    print("Unexpected response from server. Registration failed.")
+                    return
+                if result == Words.Result.CONFIRMED:
+                    print("Registration completed successfully.")
+                    self.info.name = username
+                    return
+        except Exception as e:
+            print(f"Error during registration: {e}")
+
+        except KeyboardInterrupt:
+            print("\nRegistration cancelled.")
+            return
 
     def login(self):
         try:
             username = input("Enter username: ")
-            password = input("Enter password: ")
+            password = getpass.getpass("Enter password: ")
             self.send_to_lobby(Words.Command.LOGIN, {"username": username, "password": password})
             response = self.get_response(timeout=5.0)
             if response is None:

@@ -50,6 +50,10 @@ class Protocols:
             "command": str,
             "params": dict
         })
+        """
+        command: e.g., 'login', 'register', 'create_room', etc. \n
+        params: additional parameters as a dictionary
+        """
     
     class LobbyToClient:
         MESSAGE = MessageFormat({

@@ -119,6 +119,9 @@ class LobbyServer:
             case Words.Command.LOGIN:
                 self.help_login(params, msgfmt_passer)
                 return 0
+            case Words.Command.REGISTER:
+                self.help_register(params, msgfmt_passer)
+                return 0
             case _:
                 msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, command, "", Words.Result.INVALID, {})
                 return 0
@@ -134,7 +137,7 @@ class LobbyServer:
                 request_id = str(uuid.uuid4())
                 with self.pending_db_response_lock:
                     self.pending_db_response_dict[request_id] = (False, "", {})
-                self.db_server_passer.send_args(Protocols.LobbyToDB.REQUEST, request_id, Words.Collection.USER, Words.Action.QUERY, {"username": username})
+                self.send_to_database(request_id, Words.Collection.USER, Words.Action.QUERY, {"username": username})
                 # Wait for response
                 while True:
                     time.sleep(random.uniform(0.1, 0.3))  # Avoid busy waiting
@@ -161,9 +164,56 @@ class LobbyServer:
         else:
             msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.LOGIN, "", Words.Result.ERROR, {"message": "No database server connected."})
 
+    def help_register(self, params: dict, msgfmt_passer: MessageFormatPasser) -> None:
+        username = params.get("username")
+        password = params.get("password")    
+
+        # Wait for response from database server
+        if self.db_server_passer is not None:
+            try:
+                request_id = str(uuid.uuid4())
+                with self.pending_db_response_lock:
+                    self.pending_db_response_dict[request_id] = (False, "", {})
+                self.send_to_database(request_id, Words.Collection.USER, Words.Action.CREATE, {"username": username, "password": password})
+                # Wait for response
+                while True:
+                    time.sleep(random.uniform(0.1, 0.3))  # Avoid busy waiting
+                    result, data = self.try_receive_from_database(request_id) or (None, None)
+                    if result is None:
+                        continue
+                    if result == Words.Result.CONFIRMED:
+                        msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.REGISTER, "", Words.Result.SUCCESS, {"message": "Registration successful."})
+                    elif result == Words.Result.FAILURE:
+                        msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.REGISTER, "", Words.Result.FAILURE, {"message": "Username already taken."})
+                    else:
+                        msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.REGISTER, "", Words.Result.ERROR, {"message": "Database error."})
+                    break
+                    
+            except Exception as e:
+                print(f"Error receiving response from database server: {e}")
+                msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.REGISTER, "", Words.Result.ERROR, {"message": "Database error."})
+        else:
+            msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.REGISTER, "", Words.Result.ERROR, {"message": "No database server connected."})
+
     def remove_client(self, msgfmt_passer: MessageFormatPasser) -> None:
         #self.clients.remove(msgfmt_passer)
         del self.user_infos[msgfmt_passer]
+
+    def send_to_database(self, request_id: str, collection: str, action: str, data: dict) -> None:
+        if self.db_server_passer is not None:
+            self.db_server_passer.send_args(Protocols.LobbyToDB.REQUEST, request_id, collection, action, data)
+            self.pending_db_response_dict[request_id] = (False, "", {})
+
+    def try_receive_from_database(self, request_id: str) -> tuple[str, dict] | None:
+        with self.pending_db_response_lock:
+            if request_id in self.pending_db_response_dict:
+                response_received, result, data = self.pending_db_response_dict[request_id]
+                if response_received:
+                    del self.pending_db_response_dict[request_id]
+                    return (result, data)
+        return None
+
+
 
     def start_server(self, host: str, port: int) -> None:
         self.server_sock.bind((host, port))
