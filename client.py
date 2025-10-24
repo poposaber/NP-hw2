@@ -32,6 +32,8 @@ class Client:
 
     def register(self):
         try:
+            username = ""
+            password = ""
             while True:
                 username = input("Enter desired username (or 'Ctrl+C' to cancel): ")
                 # Send username to server to check availability
@@ -41,20 +43,22 @@ class Client:
                     print("No response from server. Registration failed.")
                     return
                 responding_command, result, data = response
-                if responding_command != Words.Command.REGISTER:
+                if responding_command != Words.Command.CHECK_USERNAME:
                     print("Unexpected response from server. Registration failed.")
                     return
-                if result == Words.Result.CONFIRMED:
-                    print("Registration successful.")
-                elif result == Words.Result.FAILURE:
+                
+                if result == Words.Result.VALID:
+                    #print("Registration successful.")
+                    break
+                elif result == Words.Result.INVALID:
                     print("Username already taken. Please try a different one.")
-                    continue
                 else:
                     message = data.get("message", "Registration failed.")
                     print(message)
                     return
                 
-                password = getpass.getpass("Enter desired password: ")
+            while True:
+                password = getpass.getpass("Enter desired password (or 'Ctrl+C' to cancel): ")
                 self.send_to_lobby(Words.Command.REGISTER, {"username": username, "password": password})
                 response = self.get_response(timeout=5.0)
                 if response is None:
@@ -64,9 +68,9 @@ class Client:
                 if responding_command != Words.Command.REGISTER:
                     print("Unexpected response from server. Registration failed.")
                     return
-                if result == Words.Result.CONFIRMED:
+                if result == Words.Result.SUCCESS:
                     print("Registration completed successfully.")
-                    self.info.name = username
+                    #self.info.name = username
                     return
         except Exception as e:
             print(f"Error during registration: {e}")
@@ -88,7 +92,7 @@ class Client:
             if responding_command != Words.Command.LOGIN:
                 print("Unexpected response from server. Login failed.")
                 return
-            if result == Words.Result.CONFIRMED:
+            if result == Words.Result.SUCCESS:
                 print("Login successful.")
                 self.info.name = username
             else:

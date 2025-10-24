@@ -65,11 +65,35 @@ class DatabaseServer:
                 username = data.get("username")
                 user_info = self.user_db.get(username)
                 if user_info is not None:
-                    self.send_response(request_id, Words.Result.CONFIRMED, user_info)
+                    self.send_response(request_id, Words.Result.FOUND, user_info)
                 else:
                     self.send_response(request_id, Words.Result.NOT_FOUND, {})
+            elif action == Words.Action.CREATE:
+                username = data.get("username")
+                if username in self.user_db:
+                    self.send_response(request_id, Words.Result.FAILURE, {"message": "Username already exists."})
+                else:
+                    user_dict = {}
+                    user_dict[Words.DataParamKey.PASSWORD] = data.get("password")
+                    user_dict[Words.DataParamKey.GAMES_PLAYED] = 0
+                    user_dict[Words.DataParamKey.GAMES_WON] = 0
+                    user_dict[Words.DataParamKey.ONLINE] = False
+                    user_dict[Words.DataParamKey.CURRENT_ROOM_ID] = None
+                    self.user_db[username] = user_dict
+                    self.save_user_db()
+                    self.send_response(request_id, Words.Result.SUCCESS, {"message": "User created successfully."})
+            elif action == Words.Action.UPDATE:
+                username = data.get("username")
+                if username not in self.user_db:
+                    self.send_response(request_id, Words.Result.FAILURE, {"message": "User not found."})
+                else:
+                    for key, value in data.items():
+                        if key != "username":
+                            self.user_db[username][key] = value
+                    self.send_response(request_id, Words.Result.SUCCESS, {"message": "User updated successfully."})
+                self.save_user_db()
             else:
-                self.send_response(request_id, Words.Result.INVALID, {"message": f"Unknown action: {action}"})
+                self.send_response(request_id, Words.Result.ERROR, {"message": f"Unknown action: {action}"})
 
     def send_response(self, request_id: str, result: str, data: dict) -> None:
         self.msgfmt_passer.send_args(Protocols.DBToLobby.RESPONSE, request_id, result, data)

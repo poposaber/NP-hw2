@@ -1,6 +1,7 @@
+# next objective: make help_exit be a method, make sending offline message to db be a method, design user login token(user can only login from one client at a time)
+
 from message_format_passer import MessageFormatPasser
 from protocols import Protocols, Words
-from user_info import UserInfo
 import threading
 import socket
 import time
@@ -16,7 +17,8 @@ class LobbyServer:
         #print(f"Lobby server listening on {host}:{port}")
         # self.clients: list[MessageFormatPasser] = []
         self.connections: list[MessageFormatPasser] = []
-        self.user_infos: dict[MessageFormatPasser, UserInfo] = {}
+        #self.user_infos: dict[MessageFormatPasser, UserInfo] = {}
+        self.mfpassers_username: dict[MessageFormatPasser, str] = {}
         self.db_server_passer: MessageFormatPasser | None = None
         self.shutdown_event = threading.Event()
         self.pending_db_response_dict: dict[str, tuple[bool, str, dict]] = {}
@@ -66,6 +68,7 @@ class LobbyServer:
             msgfmt_passer.send_args(Protocols.LobbyToConnection.HANDSHAKE_RESPONSE, Words.Result.ERROR, "Database server already connected.")
             return
         self.db_server_passer = msgfmt_passer
+        self.db_server_passer.settimeout(2.0)
         print("Database server connected.")
         msgfmt_passer.send_args(Protocols.LobbyToConnection.HANDSHAKE_RESPONSE, Words.Result.CONFIRMED, "Database server connected successfully.")
         while not self.shutdown_event.is_set():
@@ -74,8 +77,7 @@ class LobbyServer:
                 responding_request_id = response[0]
                 with self.pending_db_response_lock:
                     self.pending_db_response_dict[responding_request_id] = (True, response[1], response[2])
-                
-            except queue.Empty:
+            except TimeoutError:
                 continue
             except Exception as e:
                 print(f"Error receiving response from database server: {e}")
@@ -87,7 +89,8 @@ class LobbyServer:
         pass
 
     def handle_client(self, msgfmt_passer: MessageFormatPasser) -> None:
-        self.user_infos[msgfmt_passer] = UserInfo()
+        #self.user_infos[msgfmt_passer] = UserInfo()
+        self.mfpassers_username[msgfmt_passer] = None
         msgfmt_passer.send_args(Protocols.LobbyToConnection.HANDSHAKE_RESPONSE, Words.Result.CONFIRMED, Words.Message.WELCOME_USER)
         msgfmt_passer.settimeout(2.0)
         while not self.shutdown_event.is_set():
@@ -100,6 +103,13 @@ class LobbyServer:
                 continue
             except Exception as e:
                 print(f"Error handling client {msgfmt_passer}: {e}")
+                # send database to set user offline if logged in
+                username = self.mfpassers_username.get(msgfmt_passer)
+                if username is not None:
+                    request_id = str(uuid.uuid4())
+                    with self.pending_db_response_lock:
+                        self.pending_db_response_dict[request_id] = (False, "", {})
+                    self.send_to_database(request_id, Words.Collection.USER, Words.Action.UPDATE, {"username": username, "online": False})
                 break
 
         if self.shutdown_event.is_set():
@@ -107,7 +117,10 @@ class LobbyServer:
             exit_msg = msgfmt_passer.receive_args(Protocols.ClientToLobby.COMMAND)[0]
             if exit_msg != Words.Command.EXIT:
                 print(f"Expected EXIT command, got: {exit_msg}")
-        self.remove_client(msgfmt_passer)
+
+        del self.mfpassers_username[msgfmt_passer]
+            
+        #self.remove_client(msgfmt_passer)
 
     def process_message(self, msg: list, msgfmt_passer: MessageFormatPasser) -> int:
         command, params = msg
@@ -115,16 +128,27 @@ class LobbyServer:
         # Here you would add logic to process different commands
         match command:
             case Words.Command.EXIT:
+                # if logged in, set user offline in db
+                username = self.mfpassers_username.get(msgfmt_passer)
+                if username is not None:
+                    request_id = str(uuid.uuid4())
+                    with self.pending_db_response_lock:
+                        self.pending_db_response_dict[request_id] = (False, "", {})
+                    self.send_to_database(request_id, Words.Collection.USER, Words.Action.UPDATE, {"username": username, "online": False})
+                    # Wait for update response
+                    update_result, _ = self.receive_from_database(request_id)
+                    if update_result != Words.Result.SUCCESS:
+                        print(f"Warning: Failed to update user online status for {username}")
                 return -1
             case Words.Command.LOGIN:
                 self.help_login(params, msgfmt_passer)
-                return 0
+            case Words.Command.CHECK_USERNAME:
+                self.help_check_username(params, msgfmt_passer)
             case Words.Command.REGISTER:
                 self.help_register(params, msgfmt_passer)
-                return 0
             case _:
                 msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, command, "", Words.Result.INVALID, {})
-                return 0
+        return 0
 
     def help_login(self, params: dict, msgfmt_passer: MessageFormatPasser) -> None:
         username = params.get("username")
@@ -139,24 +163,33 @@ class LobbyServer:
                     self.pending_db_response_dict[request_id] = (False, "", {})
                 self.send_to_database(request_id, Words.Collection.USER, Words.Action.QUERY, {"username": username})
                 # Wait for response
-                while True:
-                    time.sleep(random.uniform(0.1, 0.3))  # Avoid busy waiting
-                    with self.pending_db_response_lock:
-                        response_received, result, data = self.pending_db_response_dict[request_id]
-                        # it seems that client_msgfmt_passer is always msgfmt_passer
-                        if not response_received:
-                            continue
-                        del self.pending_db_response_dict[request_id]
-                        if result == Words.Result.CONFIRMED:
-                            user_info = data
-                            if user_info.get("password") == password:
-                                msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.LOGIN, "", Words.Result.CONFIRMED, {"message": "Login successful."})
-                                self.user_infos[msgfmt_passer].name = username
-                            else:
-                                msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.LOGIN, "", Words.Result.FAILURE, {"message": "Incorrect username or password."})
-                        else:
-                            msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.LOGIN, "", Words.Result.FAILURE, {"message": "Incorrect username or password."})
-                        break
+                query_result, query_data = self.receive_from_database(request_id)
+                # while True:
+                #     time.sleep(random.uniform(0.1, 0.3))  # Avoid busy waiting
+                #     with self.pending_db_response_lock:
+                #         response_received, result, data = self.pending_db_response_dict[request_id]
+                #         # it seems that client_msgfmt_passer is always msgfmt_passer
+                #         if not response_received:
+                #             continue
+                #         del self.pending_db_response_dict[request_id]
+                if query_result == Words.Result.FOUND:
+                    user_info = query_data
+                    if user_info.get("password") == password:
+                        request_id = str(uuid.uuid4())
+                        with self.pending_db_response_lock:
+                            self.pending_db_response_dict[request_id] = (False, "", {})
+                        self.send_to_database(request_id, Words.Collection.USER, Words.Action.UPDATE, {"username": username, "online": True})
+                        # Wait for update response
+                        update_result, _ = self.receive_from_database(request_id)
+                        if update_result != Words.Result.SUCCESS:
+                            print(f"Warning: Failed to update user online status for {username}")
+                        msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.LOGIN, "", Words.Result.SUCCESS, {"message": "Login successful."})
+                        self.mfpassers_username[msgfmt_passer] = username
+                        #self.user_infos[msgfmt_passer].name = username
+                    else:
+                        msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.LOGIN, "", Words.Result.FAILURE, {"message": "Incorrect username or password."})
+                else:
+                    msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.LOGIN, "", Words.Result.FAILURE, {"message": "Incorrect username or password."})
                     
             except Exception as e:
                 print(f"Error receiving response from database server: {e}")
@@ -164,6 +197,29 @@ class LobbyServer:
         else:
             msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.LOGIN, "", Words.Result.ERROR, {"message": "No database server connected."})
 
+    def help_check_username(self, params: dict, msgfmt_passer: MessageFormatPasser) -> None:
+        username = params.get("username")
+        # Wait for response from database server
+        if self.db_server_passer is not None:
+            try:
+                request_id = str(uuid.uuid4())
+                with self.pending_db_response_lock:
+                    self.pending_db_response_dict[request_id] = (False, "", {})
+                self.send_to_database(request_id, Words.Collection.USER, Words.Action.QUERY, {"username": username})
+                # Wait for response
+                result, _ = self.receive_from_database(request_id)
+                if result == Words.Result.FOUND:
+                    msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.CHECK_USERNAME, "", Words.Result.INVALID, {"message": "Username already taken."})
+                elif result == Words.Result.NOT_FOUND:
+                    msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.CHECK_USERNAME, "", Words.Result.VALID, {"message": "Username is available."})
+                else:
+                    msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.CHECK_USERNAME, "", Words.Result.ERROR, {"message": "Database error."})
+            except Exception as e:
+                print(f"Error receiving response from database server: {e}")
+                msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.CHECK_USERNAME, "", Words.Result.ERROR, {"message": "Database error."})
+        else:
+            msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.CHECK_USERNAME, "", Words.Result.ERROR, {"message": "No database server connected."})
+    
     def help_register(self, params: dict, msgfmt_passer: MessageFormatPasser) -> None:
         username = params.get("username")
         password = params.get("password")    
@@ -176,42 +232,37 @@ class LobbyServer:
                     self.pending_db_response_dict[request_id] = (False, "", {})
                 self.send_to_database(request_id, Words.Collection.USER, Words.Action.CREATE, {"username": username, "password": password})
                 # Wait for response
-                while True:
-                    time.sleep(random.uniform(0.1, 0.3))  # Avoid busy waiting
-                    result, data = self.try_receive_from_database(request_id) or (None, None)
-                    if result is None:
-                        continue
-                    if result == Words.Result.CONFIRMED:
-                        msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.REGISTER, "", Words.Result.SUCCESS, {"message": "Registration successful."})
-                    elif result == Words.Result.FAILURE:
-                        msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.REGISTER, "", Words.Result.FAILURE, {"message": "Username already taken."})
-                    else:
-                        msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.REGISTER, "", Words.Result.ERROR, {"message": "Database error."})
-                    break
-                    
+                result, _ = self.receive_from_database(request_id)
+                if result == Words.Result.SUCCESS:
+                    msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.REGISTER, "", Words.Result.SUCCESS, {"message": "Registration successful."})
+                elif result == Words.Result.FAILURE:
+                    msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.REGISTER, "", Words.Result.FAILURE, {"message": "Username already taken."})
+                else:
+                    msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.REGISTER, "", Words.Result.ERROR, {"message": "Database error."})
             except Exception as e:
                 print(f"Error receiving response from database server: {e}")
                 msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.REGISTER, "", Words.Result.ERROR, {"message": "Database error."})
         else:
             msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.REGISTER, "", Words.Result.ERROR, {"message": "No database server connected."})
 
-    def remove_client(self, msgfmt_passer: MessageFormatPasser) -> None:
+    #def remove_client(self, msgfmt_passer: MessageFormatPasser) -> None:
         #self.clients.remove(msgfmt_passer)
-        del self.user_infos[msgfmt_passer]
+        #del self.user_infos[msgfmt_passer]
 
     def send_to_database(self, request_id: str, collection: str, action: str, data: dict) -> None:
         if self.db_server_passer is not None:
             self.db_server_passer.send_args(Protocols.LobbyToDB.REQUEST, request_id, collection, action, data)
-            self.pending_db_response_dict[request_id] = (False, "", {})
 
-    def try_receive_from_database(self, request_id: str) -> tuple[str, dict] | None:
-        with self.pending_db_response_lock:
-            if request_id in self.pending_db_response_dict:
-                response_received, result, data = self.pending_db_response_dict[request_id]
-                if response_received:
-                    del self.pending_db_response_dict[request_id]
-                    return (result, data)
-        return None
+    def receive_from_database(self, request_id: str) -> tuple[str, dict]:
+        while True:
+            time.sleep(random.uniform(0.1, 0.3))  # Avoid busy waiting
+            with self.pending_db_response_lock:
+                if request_id in self.pending_db_response_dict:
+                    response_received, result, data = self.pending_db_response_dict[request_id]
+                    if response_received:
+                        del self.pending_db_response_dict[request_id]
+                        print(f"Received response from database for request_id {request_id}: {result}, {data}")
+                        return (result, data)
 
 
 

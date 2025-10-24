@@ -29,7 +29,7 @@ class Protocols:
         """
         request_id: unique identifier for the request \n
         collection: e.g., 'user', 'room', 'gamelog' \n
-        action: e.g., 'create', 'read', 'update', 'delete', 'query' \n
+        action: e.g., 'create', 'read', 'update', 'delete', 'query'\n
         data: additional data as a dictionary
         """
 
@@ -95,8 +95,10 @@ class Words:
     class Result:
         SUCCESS = "success"
         FAILURE = "failure"
+        FOUND = "found"
         NOT_FOUND = "not_found"
         ERROR = "error"
+        VALID = "valid"
         INVALID = "invalid"
         CONFIRMED = "confirmed"
     class DataParamKey:
@@ -110,6 +112,10 @@ class Words:
         TIMESTAMP = "timestamp"
         DETAILS = "details"
         REASON = "reason"
+        GAMES_PLAYED = "games_played"
+        GAMES_WON = "games_won"
+        ONLINE = "online"
+        CURRENT_ROOM_ID = "current_room_id"
     class Reason:
         INVALID_CREDENTIALS = "invalid_credentials"
         ROOM_FULL = "room_full"

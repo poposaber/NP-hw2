@@ -1,5 +1,30 @@
 {
   "barry": {
-    "password": "bababab"
+    "password": "bababab",
+    "games_played": 0,
+    "games_won": 0,
+    "online": false,
+    "current_room_id": null
+  },
+  "test": {
+    "password": "testing",
+    "games_played": 0,
+    "games_won": 0,
+    "online": false,
+    "current_room_id": null
+  },
+  "test2": {
+    "password": "testing22",
+    "games_played": 0,
+    "games_won": 0,
+    "online": false,
+    "current_room_id": null
+  },
+  "test3": {
+    "password": "pswd",
+    "games_played": 0,
+    "games_won": 0,
+    "online": false,
+    "current_room_id": null
   }
 }
