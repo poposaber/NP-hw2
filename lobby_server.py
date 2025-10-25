@@ -1,4 +1,6 @@
-# next objective: invite players online. Once invited, they can choose to accept or decline.
+# next objective: 
+# 1. invite players online. Once invited, they can choose to accept or decline. 
+# 2. replace hardcoded string with constants from protocols.py
 
 from message_format_passer import MessageFormatPasser
 from protocols import Protocols, Words
@@ -301,7 +303,7 @@ class LobbyServer:
         request_id = str(uuid.uuid4())
         with self.pending_db_response_lock:
             self.pending_db_response_dict[request_id] = (False, "", {})
-        self.send_to_database(request_id, Words.Collection.ROOM, Words.Action.CREATE, {"owner": self.mfpassers_username[msgfmt_passer], "settings": params.get("settings", {})})
+        self.send_to_database(request_id, Words.Collection.ROOM, Words.Action.CREATE, {"owner": self.mfpassers_username[msgfmt_passer], "settings": params})
         # Wait for response
         result, data = self.receive_from_database(request_id)
         if result == Words.Result.SUCCESS:
@@ -341,6 +343,8 @@ class LobbyServer:
     def help_disband_room(self, params: dict, msgfmt_passer: MessageFormatPasser) -> None:
         pass
 
+    def help_invite_player(self, params: dict, msgfmt_passer: MessageFormatPasser) -> None:
+        pass
     #def remove_client(self, msgfmt_passer: MessageFormatPasser) -> None:
         #self.clients.remove(msgfmt_passer)
         #del self.user_infos[msgfmt_passer]

@@ -139,7 +139,12 @@ class Client:
 
     def create_room(self):
         try:
-            self.send_to_lobby(Words.Command.CREATE_ROOM, {})
+            privacy = ""
+            while privacy not in ["public", "private"]:
+                privacy = input("Enter room privacy ('public' or 'private', or press Ctrl+C to cancel): ").strip().lower()
+                if privacy not in ["public", "private"]:
+                    print("Invalid input. Please enter 'public' or 'private'.")
+            self.send_to_lobby(Words.Command.CREATE_ROOM, {Words.DataParamKey.PRIVACY: privacy})
             response = self.get_response(timeout=5.0)
             if response is None:
                 print("No response from server. Create room failed.")
@@ -156,6 +161,9 @@ class Client:
             else:
                 message = data.get("message", "Create room failed.")
                 print(message)
+        except KeyboardInterrupt:
+            print("\nCreate room cancelled.")
+            return
         except Exception as e:
             print(f"Error during create room: {e}")
 

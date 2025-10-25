@@ -122,6 +122,7 @@ class Words:
         GAMES_WON = "games_won"
         ONLINE = "online"
         CURRENT_ROOM_ID = "current_room_id"
+        PRIVACY = "privacy"
     class Reason:
         INVALID_CREDENTIALS = "invalid_credentials"
         ROOM_FULL = "room_full"
