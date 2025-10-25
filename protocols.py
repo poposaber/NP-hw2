@@ -82,6 +82,8 @@ class Words:
         UPDATE = "update"
         DELETE = "delete"
         QUERY = "query"
+        ADD_USER = "add_user"
+        REMOVE_USER = "remove_user"
     class Command:
         EXIT = "exit"
         CHECK_USERNAME = "check_username" # Check if a username is available to register
@@ -91,6 +93,10 @@ class Words:
         CREATE_ROOM = "create_room"
         JOIN_ROOM = "join_room"
         LEAVE_ROOM = "leave_room"
+        DISBAND_ROOM = "disband_room"
+        INVITE_PLAYER = "invite_player"
+        ACCEPT_INVITE = "accept_invite"
+        DECLINE_INVITE = "decline_invite"
         START_GAME = "start_game"
     class Result:
         SUCCESS = "success"
@@ -129,7 +135,6 @@ class Words:
     class EventType:
         USER_JOINED = "user_joined"
         USER_LEFT = "user_left"
-        ROOM_CREATED = "room_created"
         ROOM_DISBANDED = "room_disbanded"
         INVITE_RECEIVED = "invite_received"
         GAME_STARTED = "game_started"

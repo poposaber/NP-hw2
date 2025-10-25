@@ -1,6 +1,5 @@
 import socket
 import struct
-import json
 from message_format import MessageFormat
 
 LENGTH_LIMIT = 65536

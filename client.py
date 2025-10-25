@@ -27,6 +27,11 @@ class Client:
             print("You are not logged in yet. Enter command: >>>>>>>>>> ", end="")
         else:
             print("logout: log out your account")
+            if self.info.current_room_id is None:
+                print("createroom: create a game room")
+            else:
+                print("leaveroom: leave the current game room")
+            
             print("exit: exit the lobby server and close.\n\n")
             print(f"{self.info.name}, enter command: >>>>>>>>>> ", end="")
 
@@ -59,6 +64,11 @@ class Client:
                 
             while True:
                 password = getpass.getpass("Enter desired password (or 'Ctrl+C' to cancel): ")
+                confirm_password = getpass.getpass("Confirm password: ")
+                if password != confirm_password:
+                    print("Passwords do not match. Please try again.")
+                    continue
+
                 self.send_to_lobby(Words.Command.REGISTER, {"username": username, "password": password})
                 response = self.get_response(timeout=5.0)
                 if response is None:
@@ -81,25 +91,94 @@ class Client:
 
     def login(self):
         try:
-            username = input("Enter username: ")
-            password = getpass.getpass("Enter password: ")
-            self.send_to_lobby(Words.Command.LOGIN, {"username": username, "password": password})
-            response = self.get_response(timeout=5.0)
-            if response is None:
-                print("No response from server. Login failed.")
-                return
-            responding_command, result, data = response
-            if responding_command != Words.Command.LOGIN:
-                print("Unexpected response from server. Login failed.")
-                return
-            if result == Words.Result.SUCCESS:
-                print("Login successful.")
-                self.info.name = username
-            else:
-                message = data.get("message", "Login failed.")
-                print(message)
+            while True:
+                username = input("Enter username (or 'Ctrl+C' to cancel): ")
+                password = getpass.getpass("Enter password (or 'Ctrl+C' to cancel): ")
+                self.send_to_lobby(Words.Command.LOGIN, {"username": username, "password": password})
+                response = self.get_response(timeout=5.0)
+                if response is None:
+                    print("No response from server. Login failed.")
+                    return
+                responding_command, result, data = response
+                if responding_command != Words.Command.LOGIN:
+                    print("Unexpected response from server. Login failed.")
+                    return
+                if result == Words.Result.SUCCESS:
+                    print("Login successful.")
+                    self.info.name = username
+                    break
+                else:
+                    message = data.get("message", "Login failed.")
+                    print(message)
+                    continue
+        except KeyboardInterrupt:
+            print("\nLogin cancelled.")
+            return
         except Exception as e:
             print(f"Error during login: {e}")
+
+    def logout(self):
+        try:
+            self.send_to_lobby(Words.Command.LOGOUT, {})
+            response = self.get_response(timeout=5.0)
+            if response is None:
+                print("No response from server. Logout failed.")
+                return
+            responding_command, result, data = response
+            if responding_command != Words.Command.LOGOUT:
+                print("Unexpected response from server. Logout failed.")
+                return
+            if result == Words.Result.SUCCESS:
+                print("Logout successful.")
+                self.info.reset()
+            else:
+                message = data.get("message", "Logout failed.")
+                print(message)
+        except Exception as e:
+            print(f"Error during logout: {e}")
+
+    def create_room(self):
+        try:
+            self.send_to_lobby(Words.Command.CREATE_ROOM, {})
+            response = self.get_response(timeout=5.0)
+            if response is None:
+                print("No response from server. Create room failed.")
+                return
+            responding_command, result, data = response
+            if responding_command != Words.Command.CREATE_ROOM:
+                print("Unexpected response from server. Create room failed.")
+                return
+            if result == Words.Result.SUCCESS:
+                room_id = data.get("room_id", "")
+                print(f"Room created successfully. Room ID: {room_id}")
+                self.info.current_room_id = room_id
+                self.info.is_room_owner = True
+            else:
+                message = data.get("message", "Create room failed.")
+                print(message)
+        except Exception as e:
+            print(f"Error during create room: {e}")
+
+    def leave_room(self):
+        try:
+            self.send_to_lobby(Words.Command.LEAVE_ROOM, {"room_id": self.info.current_room_id})
+            response = self.get_response(timeout=5.0)
+            if response is None:
+                print("No response from server. Leave room failed.")
+                return
+            responding_command, result, data = response
+            if responding_command != Words.Command.LEAVE_ROOM:
+                print("Unexpected response from server. Leave room failed.")
+                return
+            if result == Words.Result.SUCCESS:
+                print("Left room successfully.")
+                self.info.current_room_id = None
+                self.info.is_room_owner = False
+            else:
+                message = data.get("message", "Leave room failed.")
+                print(message)
+        except Exception as e:
+            print(f"Error during leave room: {e}")
 
     def get_input(self):
         while not self.shutdown_event.is_set():
@@ -120,6 +199,27 @@ class Client:
                             print("You are already logged in.")
                             continue
                         self.login()
+                    case "logout":
+                        if not self.info.name:
+                            print("You are not logged in.")
+                            continue
+                        self.logout()
+                    case "createroom":
+                        if not self.info.name:
+                            print("You are not logged in.")
+                            continue
+                        if self.info.current_room_id is not None:
+                            print("You are already in a room. Cannot create another room.")
+                            continue
+                        self.create_room()
+                    case "leaveroom":
+                        if not self.info.name:
+                            print("You are not logged in.")
+                            continue
+                        if self.info.current_room_id is None:
+                            print("You are not in any room.")
+                            continue
+                        self.leave_room()
                     case "exit":
                         print("Exiting client.")
                         self.close()
