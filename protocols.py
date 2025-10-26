@@ -87,6 +87,7 @@ class Words:
     class Command:
         EXIT = "exit"
         CHECK_USERNAME = "check_username" # Check if a username is available to register
+        CHECK_JOINABLE_ROOMS = "check_joinable_rooms" # Get a list of public joinable rooms
         REGISTER = "register"
         LOGIN = "login"
         LOGOUT = "logout"
@@ -94,7 +95,7 @@ class Words:
         JOIN_ROOM = "join_room"
         LEAVE_ROOM = "leave_room"
         DISBAND_ROOM = "disband_room"
-        INVITE_PLAYER = "invite_player"
+        INVITE_USER = "invite_user"
         ACCEPT_INVITE = "accept_invite"
         DECLINE_INVITE = "decline_invite"
         START_GAME = "start_game"
@@ -123,6 +124,10 @@ class Words:
         ONLINE = "online"
         CURRENT_ROOM_ID = "current_room_id"
         PRIVACY = "privacy"
+        NOW_ROOM_INFO = "now_room_info"
+        OWNER = "owner"
+        SETTINGS = "settings"
+        USERS = "users"
     class Reason:
         INVALID_CREDENTIALS = "invalid_credentials"
         ROOM_FULL = "room_full"

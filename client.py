@@ -29,6 +29,7 @@ class Client:
             print("logout: log out your account")
             if self.info.current_room_id is None:
                 print("createroom: create a game room")
+                print("joinroom: join a public game room")
             else:
                 print("leaveroom: leave the current game room")
             
@@ -42,7 +43,7 @@ class Client:
             while True:
                 username = input("Enter desired username (or 'Ctrl+C' to cancel): ")
                 # Send username to server to check availability
-                self.send_to_lobby(Words.Command.CHECK_USERNAME, {"username": username})
+                self.send_to_lobby(Words.Command.CHECK_USERNAME, {Words.DataParamKey.USERNAME: username})
                 response = self.get_response(timeout=5.0)
                 if response is None:
                     print("No response from server. Registration failed.")
@@ -58,7 +59,7 @@ class Client:
                 elif result == Words.Result.INVALID:
                     print("Username already taken. Please try a different one.")
                 else:
-                    message = data.get("message", "Registration failed.")
+                    message = data.get(Words.DataParamKey.MESSAGE, "Registration failed.")
                     print(message)
                     return
                 
@@ -69,7 +70,7 @@ class Client:
                     print("Passwords do not match. Please try again.")
                     continue
 
-                self.send_to_lobby(Words.Command.REGISTER, {"username": username, "password": password})
+                self.send_to_lobby(Words.Command.REGISTER, {Words.DataParamKey.USERNAME: username, Words.DataParamKey.PASSWORD: password})
                 response = self.get_response(timeout=5.0)
                 if response is None:
                     print("No response from server. Registration failed.")
@@ -94,7 +95,7 @@ class Client:
             while True:
                 username = input("Enter username (or 'Ctrl+C' to cancel): ")
                 password = getpass.getpass("Enter password (or 'Ctrl+C' to cancel): ")
-                self.send_to_lobby(Words.Command.LOGIN, {"username": username, "password": password})
+                self.send_to_lobby(Words.Command.LOGIN, {Words.DataParamKey.USERNAME: username, Words.DataParamKey.PASSWORD: password})
                 response = self.get_response(timeout=5.0)
                 if response is None:
                     print("No response from server. Login failed.")
@@ -108,7 +109,7 @@ class Client:
                     self.info.name = username
                     break
                 else:
-                    message = data.get("message", "Login failed.")
+                    message = data.get(Words.DataParamKey.MESSAGE, "Login failed.")
                     print(message)
                     continue
         except KeyboardInterrupt:
@@ -132,7 +133,7 @@ class Client:
                 print("Logout successful.")
                 self.info.reset()
             else:
-                message = data.get("message", "Logout failed.")
+                message = data.get(Words.DataParamKey.MESSAGE, "Logout failed.")
                 print(message)
         except Exception as e:
             print(f"Error during logout: {e}")
@@ -154,12 +155,12 @@ class Client:
                 print("Unexpected response from server. Create room failed.")
                 return
             if result == Words.Result.SUCCESS:
-                room_id = data.get("room_id", "")
+                room_id = data.get(Words.DataParamKey.ROOM_ID, "")
                 print(f"Room created successfully. Room ID: {room_id}")
                 self.info.current_room_id = room_id
                 self.info.is_room_owner = True
             else:
-                message = data.get("message", "Create room failed.")
+                message = data.get(Words.DataParamKey.MESSAGE, "Create room failed.")
                 print(message)
         except KeyboardInterrupt:
             print("\nCreate room cancelled.")
@@ -169,7 +170,7 @@ class Client:
 
     def leave_room(self):
         try:
-            self.send_to_lobby(Words.Command.LEAVE_ROOM, {"room_id": self.info.current_room_id})
+            self.send_to_lobby(Words.Command.LEAVE_ROOM, {Words.DataParamKey.ROOM_ID: self.info.current_room_id})
             response = self.get_response(timeout=5.0)
             if response is None:
                 print("No response from server. Leave room failed.")
@@ -183,10 +184,89 @@ class Client:
                 self.info.current_room_id = None
                 self.info.is_room_owner = False
             else:
-                message = data.get("message", "Leave room failed.")
+                message = data.get(Words.DataParamKey.MESSAGE, "Leave room failed.")
                 print(message)
         except Exception as e:
             print(f"Error during leave room: {e}")
+
+    def join_room(self):
+        try:
+            # first, get public room list from server
+            self.send_to_lobby(Words.Command.CHECK_JOINABLE_ROOMS, {})
+            response = self.get_response(timeout=5.0)
+            if response is None:
+                print("No response from server. Join room failed.")
+                return
+            responding_command, result, data = response # expect data = {room_id: {room_info_dict}, ...}
+            if responding_command != Words.Command.CHECK_JOINABLE_ROOMS:
+                print("Unexpected response from server. Join room failed.")
+                return
+            if result == Words.Result.SUCCESS:
+                public_rooms = data
+                if not public_rooms:
+                    print("No public rooms available.")
+                    return
+                print("Available public rooms:")
+                print("Room ID\tOwner")
+                for room_id, room_info in public_rooms.items():
+                    owner = room_info.get(Words.DataParamKey.OWNER, "Unknown")
+                    print(f"{room_id}\t{owner}")
+                while True:
+                    room_id = input("Enter the room ID to join (or 'Ctrl+C' to cancel): ")
+                    if room_id not in public_rooms.keys():
+                        print("Invalid room ID. Please try again.")
+                        continue
+                    self.send_to_lobby(Words.Command.JOIN_ROOM, {Words.DataParamKey.ROOM_ID: room_id})
+                    response = self.get_response(timeout=5.0)
+                    if response is None:
+                        print("No response from server. Join room failed.")
+                        return
+                    responding_command, result, data = response
+                    if responding_command != Words.Command.JOIN_ROOM:
+                        print("Unexpected response from server. Join room failed.")
+                        return
+                    if result == Words.Result.SUCCESS:
+                        print(f"Joined room {room_id} successfully.")
+                        self.info.current_room_id = room_id
+                        self.info.is_room_owner = False
+                        break
+                    else:
+                        message = data.get(Words.DataParamKey.MESSAGE, "Join room failed.")
+                        print(message)
+                        self.info.current_room_id = None
+                        self.info.is_room_owner = False
+
+            else:
+                message = data.get(Words.DataParamKey.MESSAGE, "Join room failed.")
+                print(message)
+        except KeyboardInterrupt:
+            print("\nJoin room cancelled.")
+            return
+        except Exception as e:
+            print(f"Error during join room: {e}")
+
+    def invite_player(self): # not yet tested
+        try:
+            invitee_username = input("Enter the username of the user to invite (or 'Ctrl+C' to cancel): ")
+            self.send_to_lobby(Words.Command.INVITE_USER, {Words.DataParamKey.USERNAME: invitee_username})
+            response = self.get_response(timeout=5.0)
+            if response is None:
+                print("No response from server. Invite failed.")
+                return
+            responding_command, result, data = response
+            if responding_command != Words.Command.INVITE_USER:
+                print("Unexpected response from server. Invite failed.")
+                return
+            if result == Words.Result.SUCCESS:
+                print("Invite sent successfully.")
+            else:
+                message = data.get(Words.DataParamKey.MESSAGE, "Invite failed.")
+                print(message)
+        except KeyboardInterrupt:
+            print("\nInvite cancelled.")
+            return
+        except Exception as e:
+            print(f"Error during invite: {e}")
 
     def get_input(self):
         while not self.shutdown_event.is_set():
@@ -228,6 +308,22 @@ class Client:
                             print("You are not in any room.")
                             continue
                         self.leave_room()
+                    case "joinroom":
+                        if not self.info.name:
+                            print("You are not logged in.")
+                            continue
+                        if self.info.current_room_id is not None:
+                            print("You are already in a room. Cannot join another room.")
+                            continue
+                        self.join_room()
+                    case "invite":
+                        if not self.info.name:
+                            print("You are not logged in.")
+                            continue
+                        if self.info.current_room_id is None:
+                            print("You are not in any room.")
+                            continue
+                        # self.invite_player()
                     case "exit":
                         print("Exiting client.")
                         self.close()

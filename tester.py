@@ -17,3 +17,8 @@ print(action, username, data)
 
 print(*[1, 2, 3])
 print(uuid.uuid4().hex)
+dict1 = {}
+if dict1:
+    print("dict1 is True")
+else:
+    print("dict1 is False")
