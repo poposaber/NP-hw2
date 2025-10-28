@@ -88,6 +88,7 @@ class Words:
         EXIT = "exit"
         CHECK_USERNAME = "check_username" # Check if a username is available to register
         CHECK_JOINABLE_ROOMS = "check_joinable_rooms" # Get a list of public joinable rooms
+        CHECK_ONLINE_USERS = "check_online_users" # Get a list of online users
         REGISTER = "register"
         LOGIN = "login"
         LOGOUT = "logout"
@@ -142,7 +143,7 @@ class Words:
         USER_JOINED = "user_joined"
         USER_LEFT = "user_left"
         ROOM_DISBANDED = "room_disbanded"
-        INVITE_RECEIVED = "invite_received"
+        INVITATION_RECEIVED = "invitation_received"
         GAME_STARTED = "game_started"
         SERVER_SHUTDOWN = "server_shutdown"
     class ConnectionType:

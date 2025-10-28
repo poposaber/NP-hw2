@@ -1,3 +1,7 @@
+# next objective:
+# 1. implement client-side handling of invitations: accept or decline.
+# 2. tackle with prompt display after events are printed.
+
 from message_format_passer import MessageFormatPasser
 from protocols import Protocols, Words
 from user_info import UserInfo
@@ -31,6 +35,7 @@ class Client:
                 print("createroom: create a game room")
                 print("joinroom: join a public game room")
             else:
+                print("invite: invite an online player to your current game room")
                 print("leaveroom: leave the current game room")
             
             print("exit: exit the lobby server and close.\n\n")
@@ -245,9 +250,48 @@ class Client:
         except Exception as e:
             print(f"Error during join room: {e}")
 
-    def invite_player(self): # not yet tested
+    def invite_player(self):
         try:
-            invitee_username = input("Enter the username of the user to invite (or 'Ctrl+C' to cancel): ")
+            self.send_to_lobby(Words.Command.CHECK_ONLINE_USERS, {})
+            response = self.get_response(timeout=5.0)
+            if response is None:
+                print("No response from server. Invite failed.")
+                return
+            responding_command, result, data = response # expect data = {users: user_list}
+            if responding_command != Words.Command.CHECK_ONLINE_USERS:
+                print("Unexpected response from server. Invite failed.")
+                return
+            if result == Words.Result.SUCCESS:
+                online_users = data.get(Words.DataParamKey.USERS, [])
+                try:
+                    online_users.remove(self.info.name)  # Remove self from the list
+                except ValueError:
+                    pass
+                if not online_users:
+                    print("No online users available to invite.")
+                    return
+                print("Online users:")
+                for num, user in enumerate(online_users, 1):
+                    if user != self.info.name:
+                        print(f"{num}. {user}")
+            else:
+                message = data.get(Words.DataParamKey.MESSAGE, "Invite failed.")
+                print(message)
+                return
+            # code checks to here
+            invitee_username = ""
+            while True:
+                invitee_index = input("Enter the number of the user to invite (or 'Ctrl+C' to cancel): ")
+                try:
+                    invitee_index = int(invitee_index)
+                    if invitee_index < 1 or invitee_index > len(online_users):
+                        print("Invalid user number.")
+                        continue
+                    invitee_username = online_users[invitee_index - 1]
+                    break
+                except ValueError:
+                    print("Invalid input. Please enter an integer.")
+            
             self.send_to_lobby(Words.Command.INVITE_USER, {Words.DataParamKey.USERNAME: invitee_username})
             response = self.get_response(timeout=5.0)
             if response is None:
@@ -323,7 +367,7 @@ class Client:
                         if self.info.current_room_id is None:
                             print("You are not in any room.")
                             continue
-                        # self.invite_player()
+                        self.invite_player()
                     case "exit":
                         print("Exiting client.")
                         self.close()
@@ -396,10 +440,25 @@ class Client:
 
     def handle_event(self, event_type: str, data: dict) -> None:
         print(f"Handling event: {event_type} with data: {data}")
-        if event_type == Words.EventType.SERVER_SHUTDOWN:
-            print("Server is shutting down. Closing client.")
-            self.close()
-
+        match event_type:
+            case Words.EventType.SERVER_SHUTDOWN:
+                print("Server is shutting down. Closing client.")
+                self.close()
+            case Words.EventType.INVITATION_RECEIVED:
+                inviter_username = data.get(Words.DataParamKey.USERNAME)
+                print(f"Received invitation from {inviter_username}.")
+                # Here you can add logic to accept or decline the invitation
+            case Words.EventType.USER_JOINED:
+                username = data.get(Words.DataParamKey.USERNAME)
+                print(f"User {username} has joined your room.")
+            case Words.EventType.USER_LEFT:
+                username = data.get(Words.DataParamKey.USERNAME)
+                print(f"User {username} has left your room.")
+                if not self.info.is_room_owner and data.get(Words.DataParamKey.NOW_ROOM_INFO, {}).get("owner") == self.info.name:
+                    print("You are now the room owner.")
+                    self.info.is_room_owner = True
+            case _:
+                print(f"Unknown event type: {event_type}")
     def handle_message(self, msg: list) -> None:
         message_type, responding_command, event_type, result, data = msg
         if message_type == Words.MessageType.RESPONSE:

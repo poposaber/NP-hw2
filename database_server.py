@@ -77,12 +77,18 @@ class DatabaseServer:
             case Words.Collection.USER:
                 match action:
                     case Words.Action.QUERY:
-                        username = data.get(Words.DataParamKey.USERNAME)
-                        user_info = self.user_db.get(username)
-                        if user_info is not None:
-                            self.send_response(request_id, Words.Result.FOUND, user_info)
+                        if Words.DataParamKey.USERNAME in data:
+                            username = data.get(Words.DataParamKey.USERNAME)
+                            user_info = self.user_db.get(username)
+                            if user_info is not None:
+                                self.send_response(request_id, Words.Result.FOUND, user_info)
+                            else:
+                                self.send_response(request_id, Words.Result.NOT_FOUND, {})
                         else:
-                            self.send_response(request_id, Words.Result.NOT_FOUND, {})
+                            # here data may contain other filtering criteria
+                            limited_user_info = {username: user_info for username, user_info in self.user_db.items() \
+                                                  if not any(data.get(key) != user_info.get(key) for key in data.keys())}
+                            self.send_response(request_id, Words.Result.FOUND, limited_user_info)
                     case Words.Action.CREATE:
                         username = data.get(Words.DataParamKey.USERNAME)
                         if username in self.user_db:
