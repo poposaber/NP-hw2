@@ -8,6 +8,8 @@ from user_info import UserInfo
 import threading
 import queue
 import getpass
+import sys
+import os
 
 class Client:
     def __init__(self) -> None:
@@ -34,6 +36,8 @@ class Client:
             if self.info.current_room_id is None:
                 print("createroom: create a game room")
                 print("joinroom: join a public game room")
+                if self.info.users_inviting_me:
+                    print("accept: accept an invitation to join a game room")
             else:
                 print("invite: invite an online player to your current game room")
                 print("leaveroom: leave the current game room")
@@ -234,6 +238,7 @@ class Client:
                         print(f"Joined room {room_id} successfully.")
                         self.info.current_room_id = room_id
                         self.info.is_room_owner = False
+                        self.info.users_inviting_me.clear()
                         break
                     else:
                         message = data.get(Words.DataParamKey.MESSAGE, "Join room failed.")
@@ -312,6 +317,63 @@ class Client:
         except Exception as e:
             print(f"Error during invite: {e}")
 
+    def accept_invitation(self):
+        print("You have invitations from the following users:")
+        for i, inviter in enumerate(self.info.users_inviting_me, 1):
+            print(f"{i}. {inviter}")
+        while True:
+            choice = input("Enter the number of the user whose invitation you want to accept (or 'Ctrl+C' to cancel): ")
+            try:
+                choice = int(choice)
+                if choice < 1 or choice > len(self.info.users_inviting_me):
+                    print("Invalid choice. Please try again.")
+                    continue
+                inviter_username = list(self.info.users_inviting_me)[choice - 1]
+                self.info.users_inviting_me.remove(inviter_username)
+                self.send_to_lobby(Words.Command.ACCEPT_INVITE, {Words.DataParamKey.USERNAME: inviter_username})
+                response = self.get_response(timeout=5.0)
+                if response is None:
+                    print("No response from server. Accept invitation failed.")
+                    return
+                responding_command, result, data = response
+                if responding_command != Words.Command.ACCEPT_INVITE:
+                    print("Unexpected response from server. Accept invitation failed.")
+                    return
+                if result == Words.Result.SUCCESS:
+                    print("Invitation accepted successfully.")
+                    self.info.users_inviting_me.clear()
+                    self.info.current_room_id = data.get(Words.DataParamKey.ROOM_ID)
+                    break
+                else:
+                    message = data.get(Words.DataParamKey.MESSAGE, "Accept invitation failed.")
+                    print(message)
+                    return
+            except ValueError:
+                print("Invalid input. Please enter a number.")
+
+    # def clear_stdin_buffer(self) -> None:
+    #     """Best-effort 清除尚未按 Enter 的鍵盤輸入(Windows / POSIX)。"""
+    #     try:
+    #         if os.name == "nt":
+    #             # Windows: FlushConsoleInputBuffer
+    #             import ctypes
+    #             STD_INPUT_HANDLE = -10
+    #             h = ctypes.windll.kernel32.GetStdHandle(STD_INPUT_HANDLE)
+    #             ctypes.windll.kernel32.FlushConsoleInputBuffer(h)
+    #         else:
+    #             # POSIX: tcflush on stdin
+    #             import termios
+    #             termios.tcflush(sys.stdin, termios.TCIFLUSH)
+    #     except Exception:
+    #         # fallback: consume pending chars on Windows console if possible
+    #         try:
+    #             if os.name == "nt":
+    #                 import msvcrt
+    #                 while msvcrt.kbhit():
+    #                     msvcrt.getwch()
+    #         except Exception:
+    #             pass
+
     def get_input(self):
         while not self.shutdown_event.is_set():
             try:
@@ -368,6 +430,14 @@ class Client:
                             print("You are not in any room.")
                             continue
                         self.invite_player()
+                    case "accept":
+                        if not self.info.name:
+                            print("You are not logged in.")
+                            continue
+                        if not self.info.users_inviting_me:
+                            print("You have no invitations to accept.")
+                            continue
+                        self.accept_invitation()
                     case "exit":
                         print("Exiting client.")
                         self.close()
@@ -440,13 +510,15 @@ class Client:
 
     def handle_event(self, event_type: str, data: dict) -> None:
         print(f"Handling event: {event_type} with data: {data}")
+        # self.clear_stdin_buffer()
         match event_type:
             case Words.EventType.SERVER_SHUTDOWN:
                 print("Server is shutting down. Closing client.")
                 self.close()
             case Words.EventType.INVITATION_RECEIVED:
                 inviter_username = data.get(Words.DataParamKey.USERNAME)
-                print(f"Received invitation from {inviter_username}.")
+                self.info.users_inviting_me.add(inviter_username)
+                print(f"Received invitation from {inviter_username}. Enter 'accept' to join the room or ignore to decline.")
                 # Here you can add logic to accept or decline the invitation
             case Words.EventType.USER_JOINED:
                 username = data.get(Words.DataParamKey.USERNAME)
@@ -459,6 +531,7 @@ class Client:
                     self.info.is_room_owner = True
             case _:
                 print(f"Unknown event type: {event_type}")
+        #self.print_prompt()
     def handle_message(self, msg: list) -> None:
         message_type, responding_command, event_type, result, data = msg
         if message_type == Words.MessageType.RESPONSE:

@@ -147,19 +147,40 @@ class DatabaseServer:
                             self.save_room_db()
                             self.send_response(request_id, Words.Result.SUCCESS, {Words.DataParamKey.MESSAGE: "Room deleted successfully."})
                     case Words.Action.ADD_USER:
-                        room_id = data.get(Words.DataParamKey.ROOM_ID)
-                        username = data.get(Words.DataParamKey.USERNAME)
+                        room_id = None
+                        username = None
+                        invitee_username = None
+                        inviter_username = None
+                        if Words.DataParamKey.ROOM_ID in data:
+                            room_id = data.get(Words.DataParamKey.ROOM_ID)
+                            username = data.get(Words.DataParamKey.USERNAME)
+                        else:
+                            inviter_username = data.get(Words.DataParamKey.INVITER_USERNAME)
+                            invitee_username = data.get(Words.DataParamKey.INVITEE_USERNAME)
+                            room_id = self.user_db[inviter_username][Words.DataParamKey.CURRENT_ROOM_ID]
+                            username = invitee_username
+
                         room_info = self.room_db.get(room_id)
+                        
                         if room_info is None:
                             self.send_response(request_id, Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "Room not found."})
                         elif username in room_info["users"]:
                             self.send_response(request_id, Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "User already in room."})
+                        elif self.user_db[username][Words.DataParamKey.CURRENT_ROOM_ID] is not None:
+                            self.send_response(request_id, Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "User already in another room."})
+                        elif len(room_info[Words.DataParamKey.USERS]) == 2: # this is a 2-player game room
+                            self.send_response(request_id, Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "Room is full."})
+                        elif self.user_db[username][Words.DataParamKey.ONLINE] is False:
+                            self.send_response(request_id, Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "User is not online."})
+                        elif inviter_username is not None and inviter_username not in room_info["users"]:
+                            self.send_response(request_id, Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "Inviter is not in the room."})
                         else:
+                            # room_info[Words.DataParamKey.ROOM_ID] = room_id  # include room_id in the info sent back
                             room_info["users"].append(username)
                             self.save_room_db()
                             self.user_db[username][Words.DataParamKey.CURRENT_ROOM_ID] = room_id
                             self.save_user_db()
-                            self.send_response(request_id, Words.Result.SUCCESS, {Words.DataParamKey.MESSAGE: "User added to room successfully.", Words.DataParamKey.NOW_ROOM_INFO: room_info})
+                            self.send_response(request_id, Words.Result.SUCCESS, {Words.DataParamKey.MESSAGE: "User added to room successfully.", Words.DataParamKey.ROOM_ID: room_id, Words.DataParamKey.NOW_ROOM_INFO: room_info})
 
                     case Words.Action.REMOVE_USER:
                         room_id = data.get(Words.DataParamKey.ROOM_ID)
@@ -170,6 +191,7 @@ class DatabaseServer:
                         elif username not in room_info["users"]:
                             self.send_response(request_id, Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "User not in room."})
                         else:
+                            room_info[Words.DataParamKey.ROOM_ID] = room_id  # include room_id in the info sent back
                             room_info["users"].remove(username)
                             if room_info["owner"] == username:
                                 if room_info["users"]:
@@ -180,7 +202,7 @@ class DatabaseServer:
                             self.save_room_db()
                             self.user_db[username][Words.DataParamKey.CURRENT_ROOM_ID] = None
                             self.save_user_db()
-                            self.send_response(request_id, Words.Result.SUCCESS, {Words.DataParamKey.MESSAGE: "User removed from room successfully.", Words.DataParamKey.NOW_ROOM_INFO: room_info})
+                            self.send_response(request_id, Words.Result.SUCCESS, {Words.DataParamKey.MESSAGE: "User removed from room successfully.", Words.DataParamKey.ROOM_ID: room_id, Words.DataParamKey.NOW_ROOM_INFO: room_info})
                     case _:
                         self.send_response(request_id, Words.Result.ERROR, {Words.DataParamKey.MESSAGE: f"Unknown action: {action}"})
             case _:

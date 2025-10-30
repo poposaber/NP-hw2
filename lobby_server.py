@@ -1,6 +1,5 @@
 # next objective: 
-# 1. Once invited, they can choose to accept or decline.
-# 2. rework the lobby server shutdown process to be more graceful.
+# 
 
 from message_format_passer import MessageFormatPasser
 from protocols import Protocols, Words
@@ -26,7 +25,7 @@ class LobbyServer:
         self.pending_db_response_dict: dict[str, tuple[bool, str, dict]] = {}
         """The dict contains all sent db_requests, after processing, received responses will be popped. {request_id: (response_received, result, data)}"""
         self.pending_db_response_lock = threading.Lock()
-        self.invitee_inviter_dict: dict = {} # {invitee_username: inviter_username}
+        self.invitee_inviter_set_pair: set[tuple] = set()  # {(invitee_username, inviter_username)}
         self.invitation_lock = threading.Lock()
         
         #self.send_to_DB_queue = queue.Queue()
@@ -151,6 +150,8 @@ class LobbyServer:
                 self.help_join_room(params, msgfmt_passer)
             case Words.Command.INVITE_USER:
                 self.help_invite_user(params, msgfmt_passer)
+            case Words.Command.ACCEPT_INVITE:
+                self.help_accept_invite(params, msgfmt_passer)
             case _:
                 msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, command, "", Words.Result.INVALID, {})
         return 0
@@ -174,7 +175,15 @@ class LobbyServer:
                         self.pending_db_response_dict[request_id] = (False, "", {})
                     self.send_to_database(request_id, Words.Collection.ROOM, Words.Action.REMOVE_USER, {Words.DataParamKey.ROOM_ID: current_room_id, Words.DataParamKey.USERNAME: username})
                     # wait for response
-                    self.receive_from_database(request_id)
+                    result, data = self.receive_from_database(request_id)
+                    # notify other users in the room
+                    if result == Words.Result.SUCCESS:
+                        now_room_info = data.get(Words.DataParamKey.NOW_ROOM_INFO, {})
+                        for user in now_room_info.get("users", []):
+                            for passer, username in self.mfpassers_username.items():
+                                if username == user and passer != msgfmt_passer:
+                                    passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.EVENT, "", Words.EventType.USER_LEFT, "", {Words.DataParamKey.USERNAME: self.mfpassers_username[msgfmt_passer], Words.DataParamKey.NOW_ROOM_INFO: now_room_info})
+                            
 
             request_id = str(uuid.uuid4())
             with self.pending_db_response_lock:
@@ -390,11 +399,48 @@ class LobbyServer:
                     if username == invited_username:
                         passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.EVENT, "", Words.EventType.INVITATION_RECEIVED, "", {Words.DataParamKey.USERNAME: self.mfpassers_username[msgfmt_passer]})
                         with self.invitation_lock:
-                            self.invitee_inviter_dict[invited_username] = self.mfpassers_username[msgfmt_passer]
+                            self.invitee_inviter_set_pair.add((invited_username, self.mfpassers_username[msgfmt_passer]))
                         msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.INVITE_USER, "", Words.Result.SUCCESS, {Words.DataParamKey.MESSAGE: "Invitation sent successfully."})
                         return
                 msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.INVITE_USER, "", Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "Invited user not found among connected clients."})
         
+    def help_accept_invite(self, params: dict, msgfmt_passer: MessageFormatPasser) -> None:
+        if self.db_server_passer is None:
+            msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.ACCEPT_INVITE, "", Words.Result.ERROR, {Words.DataParamKey.MESSAGE: "No database server connected."})
+            return
+        inviter_username = params.get(Words.DataParamKey.USERNAME)
+        invitee_username = self.mfpassers_username.get(msgfmt_passer)
+        if invitee_username is None:
+            msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.ACCEPT_INVITE, "", Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "User not logged in."})
+            return
+        with self.invitation_lock:
+            if (invitee_username, inviter_username) not in self.invitee_inviter_set_pair:
+                msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.ACCEPT_INVITE, "", Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "No invitation found from this user."})
+                return
+            self.invitee_inviter_set_pair.remove((invitee_username, inviter_username))
+        # Send join room request on behalf of invitee
+        request_id = str(uuid.uuid4())
+        with self.pending_db_response_lock:
+            self.pending_db_response_dict[request_id] = (False, "", {})
+        self.send_to_database(request_id, Words.Collection.ROOM, Words.Action.ADD_USER, {Words.DataParamKey.INVITEE_USERNAME: invitee_username, Words.DataParamKey.INVITER_USERNAME: inviter_username})
+        # Wait for response
+        result, data = self.receive_from_database(request_id)
+        now_room_info = data.get(Words.DataParamKey.NOW_ROOM_INFO, {})
+        room_id = data.get(Words.DataParamKey.ROOM_ID, None)
+        if result == Words.Result.SUCCESS:
+            with self.invitation_lock:
+                for invitee, inviter in list(self.invitee_inviter_set_pair):
+                    if invitee == invitee_username:
+                        self.invitee_inviter_set_pair.remove((invitee, inviter))
+            msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.ACCEPT_INVITE, "", Words.Result.SUCCESS, {Words.DataParamKey.MESSAGE: "Joined room successfully.", Words.DataParamKey.ROOM_ID: room_id, Words.DataParamKey.NOW_ROOM_INFO: now_room_info})
+            for user in now_room_info.get("users", []):
+                for passer, username in self.mfpassers_username.items():
+                    if username == user and passer != msgfmt_passer:
+                        passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.EVENT, "", Words.EventType.USER_JOINED, "", {Words.DataParamKey.USERNAME: invitee_username, Words.DataParamKey.NOW_ROOM_INFO: now_room_info})
+        elif result == Words.Result.FAILURE:
+            msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.ACCEPT_INVITE, "", Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: data.get(Words.DataParamKey.MESSAGE, "Failed to join room.")})
+        else:
+            msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.ACCEPT_INVITE, "", Words.Result.ERROR, {Words.DataParamKey.MESSAGE: "Database error."})
 
     def help_check_joinable_rooms(self, params: dict, msgfmt_passer: MessageFormatPasser) -> None:
         if self.db_server_passer is None:
@@ -429,6 +475,10 @@ class LobbyServer:
         result, data = self.receive_from_database(request_id)
         now_room_info = data.get(Words.DataParamKey.NOW_ROOM_INFO, {})
         if result == Words.Result.SUCCESS:
+            with self.invitation_lock:
+                for invitee, inviter in list(self.invitee_inviter_set_pair):
+                    if invitee == self.mfpassers_username[msgfmt_passer]:
+                        self.invitee_inviter_set_pair.remove((invitee, inviter))
             msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.JOIN_ROOM, "", Words.Result.SUCCESS, {Words.DataParamKey.MESSAGE: "Joined room successfully.", Words.DataParamKey.NOW_ROOM_INFO: now_room_info})
             for user in now_room_info.get("users", []):
                 for passer, username in self.mfpassers_username.items():

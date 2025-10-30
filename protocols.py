@@ -111,6 +111,8 @@ class Words:
         CONFIRMED = "confirmed"
     class DataParamKey:
         USERNAME = "username"
+        INVITER_USERNAME = "inviter_username"
+        INVITEE_USERNAME = "invitee_username"
         PASSWORD = "password"
         ROOM_ID = "room_id"
         PLAYERS = "players"
