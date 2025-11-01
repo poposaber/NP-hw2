@@ -1,4 +1,5 @@
 from message_format import MessageFormat
+import random
 import uuid
 test_format = MessageFormat({
     "action": str,
@@ -22,3 +23,19 @@ if dict1:
     print("dict1 is True")
 else:
     print("dict1 is False")
+
+rng1 = random.Random(0)
+rng2 = random.Random(0)
+num_list = [0, 0, 0, 0, 0, 0]
+for _ in range(115):
+    num = rng1.choice([1,2,3,4,5])
+    print(num)
+    num_list[num] += 1
+print(num_list)
+
+num_list = [0, 0, 0, 0, 0, 0]
+for _ in range(115):
+    num = rng2.choice([1,2,3,4,5])
+    print(num)
+    num_list[num] += 1
+print(num_list)

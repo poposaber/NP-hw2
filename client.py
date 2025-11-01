@@ -5,24 +5,32 @@
 from message_format_passer import MessageFormatPasser
 from protocols import Protocols, Words
 from user_info import UserInfo
+from tetris import Tetris
+from game_window import GameWindow
 import threading
 import queue
 import getpass
 import sys
 import os
+import time
 
 class Client:
     def __init__(self) -> None:
+        self.host = ""
         self.lobby_msgfmt_passer = MessageFormatPasser(timeout=1.0)
         self.game_msgfmt_passer = MessageFormatPasser(timeout=1.0)
         self.temp_username: str | None = None
         self.info = UserInfo()
         self.listen_thread = threading.Thread(target=self.listen_for_messages)
         self.get_event_thread = threading.Thread(target=self.listen_for_events)
+        self.listen_game_thread: threading.Thread | None = None
         self.shutdown_event = threading.Event()
         self.fatal_error_event = threading.Event()
         self.response_queue = queue.Queue()
         self.event_queue = queue.Queue()
+        self.player_id: str | None = None
+        self.game_connected = False
+        self.game_window: GameWindow | None = None
 
     def print_prompt(self):
         print("\n\nCommands you can type:\n")
@@ -41,6 +49,9 @@ class Client:
             else:
                 print("invite: invite an online player to your current game room")
                 print("leaveroom: leave the current game room")
+                print("startgame: start the game (room owner only)")
+                if self.game_connected:
+                    print("play: play the game")
             
             print("exit: exit the lobby server and close.\n\n")
             print(f"{self.info.name}, enter command: >>>>>>>>>> ", end="")
@@ -374,6 +385,49 @@ class Client:
     #         except Exception:
     #             pass
 
+    def start_game(self):
+        try:
+            self.send_to_lobby(Words.Command.START_GAME, {})
+            response = self.get_response(timeout=5.0)
+            if response is None:
+                print("No response from server. Start game failed.")
+                return
+            responding_command, result, data = response
+            if responding_command != Words.Command.START_GAME:
+                print("Unexpected response from server. Start game failed.")
+                return
+            if result == Words.Result.SUCCESS:
+                print("Game started successfully.")
+            else:
+                message = data.get(Words.DataParamKey.MESSAGE, "Start game failed.")
+                print(message)
+        except Exception as e:
+            print(f"Error during start game: {e}")
+
+    def play_game(self):
+        print("playing game...")
+        self.game_window = GameWindow(game_server_passer=self.game_msgfmt_passer, player_id=self.player_id)
+        self.listen_game_thread = threading.Thread(target=self.listen_for_game_messages)
+        self.listen_game_thread.start()
+        time.sleep(0.2)  # give some time for the thread to start
+        self.game_window.run()
+        self.game_connected = False
+        self.listen_game_thread.join()
+        self.game_msgfmt_passer.close()
+        self.game_msgfmt_passer = MessageFormatPasser(timeout=1.0)
+
+    def listen_for_game_messages(self):
+        player1_username, player2_username, player_health, now_piece, next_pieces, goal_score = self.game_msgfmt_passer.receive_args(Protocols.GameServerToPlayer.GAME_STARTED)
+        self.game_window.init_player_info(player1_username, player2_username, player_health, now_piece, next_pieces, goal_score)
+        while True:
+            state1, state2, data = self.game_msgfmt_passer.receive_args(Protocols.GameServerToPlayer.GAME_UPDATE)
+            with self.game_window.game_update_lock:
+                self.game_window.game_update_temp['state1'] = state1
+                self.game_window.game_update_temp['state2'] = state2
+                self.game_window.game_update_temp['data'] = data
+            if 'game_over' in data:
+                break
+
     def get_input(self):
         while not self.shutdown_event.is_set():
             try:
@@ -438,6 +492,28 @@ class Client:
                             print("You have no invitations to accept.")
                             continue
                         self.accept_invitation()
+                    case "startgame":
+                        if not self.info.name:
+                            print("You are not logged in.")
+                            continue
+                        if self.info.current_room_id is None:
+                            print("You are not in any room.")
+                            continue
+                        if not self.info.is_room_owner:
+                            print("Only the room owner can start the game.")
+                            continue
+                        self.start_game()
+                    case "play":
+                        if not self.info.name:
+                            print("You are not logged in.")
+                            continue
+                        if self.info.current_room_id is None:
+                            print("You are not in any room.")
+                            continue
+                        if not self.game_connected:
+                            print("You are not connected to the game server.")
+                            continue
+                        self.play_game()
                     case "exit":
                         print("Exiting client.")
                         self.close()
@@ -450,6 +526,7 @@ class Client:
                 print(f"Error getting input: {e}")
 
     def start(self, host: str = "127.0.0.1", port: int = 21354) -> None:
+        self.host = host
         self.lobby_msgfmt_passer.connect(host, port)
         
         self.lobby_msgfmt_passer.send_args(Protocols.ConnectionToLobby.HANDSHAKE, Words.ConnectionType.CLIENT)
@@ -494,7 +571,7 @@ class Client:
                 #     self.game_msgfmt_passer.close()
                 # except Exception:
                 #     pass
-                self.fatal_error_event.set()
+                self.shutdown_event.set()
 
     def listen_for_events(self) -> None:
         while not self.shutdown_event.is_set():
@@ -529,6 +606,60 @@ class Client:
                 if not self.info.is_room_owner and data.get(Words.DataParamKey.NOW_ROOM_INFO, {}).get("owner") == self.info.name:
                     print("You are now the room owner.")
                     self.info.is_room_owner = True
+            case Words.EventType.CONNECT_TO_GAME_SERVER:
+                host = data.get(Words.DataParamKey.HOST, self.host)
+                port = data.get(Words.DataParamKey.PORT)
+                if port is None:
+                    print("CONNECT_TO_GAME_SERVER event missing port. Ignoring.")
+                    return
+                print(f"Game is starting! Connect to game server at {host}:{port}.")
+                if self.game_connected:
+                    print("Already connected to a game server; ignoring duplicate connect event.")
+                    return
+                try:
+                    # close any previous game passer (best-effort)
+                    try:
+                        if self.game_msgfmt_passer is not None:
+                            self.game_msgfmt_passer.close()
+                    except Exception:
+                        pass
+
+                    # create fresh passer and connect
+                    self.game_msgfmt_passer = MessageFormatPasser(timeout=2.0)
+                    self.game_msgfmt_passer.connect(host, port)
+
+                    # send client->server connect handshake (game server expects this)
+                    self.game_msgfmt_passer.send_args(Protocols.ClientToGameServer.CONNECT, self.info.name, self.info.current_room_id, 'player')
+
+                    # receive single CONNECT_RESPONSE and unpack it once
+                    res = self.game_msgfmt_passer.receive_args(Protocols.GameServerToPlayer.CONNECT_RESPONSE)
+                    if not res:
+                        print("No response from game server. Connection failed.")
+                        try:
+                            self.game_msgfmt_passer.close()
+                        except Exception:
+                            pass
+                        return
+
+                    result, role, seed, random_mode, gravity_plan = res
+                    if result != Words.Result.SUCCESS:
+                        print("Failed to connect to game server.")
+                        try:
+                            self.game_msgfmt_passer.close()
+                        except Exception:
+                            pass
+                        return
+
+                    print(f"Connected to game server as {role} with seed {seed} and random mode {random_mode}.")
+                    self.player_id = role
+                    self.game_connected = True
+                except Exception as e:
+                    print(f"Error connecting to game server: {e}")
+                    try:
+                        if self.game_msgfmt_passer is not None:
+                            self.game_msgfmt_passer.close()
+                    except Exception:
+                        pass
             case _:
                 print(f"Unknown event type: {event_type}")
         #self.print_prompt()

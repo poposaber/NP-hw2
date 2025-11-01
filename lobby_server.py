@@ -9,10 +9,13 @@ import time
 import queue
 import uuid
 import random
+from game_server import GameServer
 
 class LobbyServer:
     def __init__(self) -> None:
         self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.host = ""
+        self.port = 0
         #self.server_sock.bind((host, port))
         #self.server_sock.listen()
         #print(f"Lobby server listening on {host}:{port}")
@@ -27,6 +30,8 @@ class LobbyServer:
         self.pending_db_response_lock = threading.Lock()
         self.invitee_inviter_set_pair: set[tuple] = set()  # {(invitee_username, inviter_username)}
         self.invitation_lock = threading.Lock()
+        self.game_servers: dict[str, GameServer] = {}  # {room_id: GameServer}
+        self.game_server_threads: dict[str, threading.Thread] = {}  # {room_id: Thread}
         
         #self.send_to_DB_queue = queue.Queue()
         #self.accept_thread = threading.Thread(target=self.accept_connections, daemon=True)
@@ -152,6 +157,8 @@ class LobbyServer:
                 self.help_invite_user(params, msgfmt_passer)
             case Words.Command.ACCEPT_INVITE:
                 self.help_accept_invite(params, msgfmt_passer)
+            case Words.Command.START_GAME:
+                self.help_start_game(params, msgfmt_passer)
             case _:
                 msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, command, "", Words.Result.INVALID, {})
         return 0
@@ -489,7 +496,81 @@ class LobbyServer:
         else:
             msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.JOIN_ROOM, "", Words.Result.ERROR, {Words.DataParamKey.MESSAGE: "Database error."})
         
+    def help_start_game(self, params: dict, msgfmt_passer: MessageFormatPasser) -> None:
+        if self.db_server_passer is None:
+            msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.START_GAME, "", Words.Result.ERROR, {Words.DataParamKey.MESSAGE: "No database server connected."})
+            return
+        if self.mfpassers_username.get(msgfmt_passer) is None:
+            msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.START_GAME, "", Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "User not logged in."})
+            return
+        request_id = str(uuid.uuid4())
+        with self.pending_db_response_lock:
+            self.pending_db_response_dict[request_id] = (False, "", {})
+        self.send_to_database(request_id, Words.Collection.USER, Words.Action.QUERY, {Words.DataParamKey.USERNAME: self.mfpassers_username[msgfmt_passer]})
+        # Wait for response
+        result, data = self.receive_from_database(request_id)
+        if result == Words.Result.FOUND:
+            current_room_id = data.get("current_room_id")
+            if current_room_id is None:
+                msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.START_GAME, "", Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "User not in a room."})
+                return
+            
+            # Notify game server to start game
+            request_id = str(uuid.uuid4())
+            with self.pending_db_response_lock:
+                self.pending_db_response_dict[request_id] = (False, "", {})
+            self.send_to_database(request_id, Words.Collection.ROOM, Words.Action.QUERY, {Words.DataParamKey.ROOM_ID: current_room_id})
+            # Wait for response
+            result, data = self.receive_from_database(request_id)
+            if result != Words.Result.FOUND:
+                msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.START_GAME, "", Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "Room not found."})
+                return
+            owner = data.get(Words.DataParamKey.OWNER)
+            if owner != self.mfpassers_username[msgfmt_passer]:
+                msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.START_GAME, "", Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "Only the room owner can start the game."})
+                return
+            # Here you would add logic to notify the game server to start the game
+            # attempt to start a new game server for the room by tuning port numbers
+            offset = 0
+            started = False
+            while True:
+                try:
+                    self.game_servers[current_room_id] = GameServer("0.0.0.0", 30000 + offset)
+                    #self.game_servers[current_room_id].start()
+                    self.game_server_threads[current_room_id] = threading.Thread(target=self.game_servers[current_room_id].start)
+                    self.game_server_threads[current_room_id].start()
+                    started = True
+                    time.sleep(0.5)  # Give some time for the server to start
+                    break
+                except OSError as e:
+                    print(f"Port {30000 + offset} in use, trying next port.")
+                    offset += 1
+                except Exception as e:
+                    print(f"Error starting game server for room {current_room_id}: {e}")
+                    break
 
+            if not started:
+                msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.START_GAME, "", Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "Failed to start game server."})
+                return
+
+            request_id = str(uuid.uuid4())
+            with self.pending_db_response_lock:
+                self.pending_db_response_dict[request_id] = (False, "", {})
+            self.send_to_database(request_id, Words.Collection.ROOM, Words.Action.UPDATE, {Words.DataParamKey.ROOM_ID: current_room_id, Words.DataParamKey.IS_PLAYING: True})
+            # Wait for response
+            result, _ = self.receive_from_database(request_id)
+            if result != Words.Result.SUCCESS:
+                print(f"Warning: Failed to update room playing status for room {current_room_id}")
+
+            msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.START_GAME, "", Words.Result.SUCCESS, {Words.DataParamKey.MESSAGE: "Game started successfully."})
+            for user in data.get(Words.DataParamKey.USERS, []):
+                for passer, username in self.mfpassers_username.items():
+                    if username == user:
+                        passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.EVENT, "", Words.EventType.CONNECT_TO_GAME_SERVER, "", {Words.DataParamKey.PORT: self.game_servers[current_room_id].port})
+        elif result == Words.Result.NOT_FOUND:
+            msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.START_GAME, "", Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "User not found."})
+        else:
+            msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.START_GAME, "", Words.Result.ERROR, {Words.DataParamKey.MESSAGE: "Database error."})
     #def remove_client(self, msgfmt_passer: MessageFormatPasser) -> None:
         #self.clients.remove(msgfmt_passer)
         #del self.user_infos[msgfmt_passer]
@@ -512,6 +593,8 @@ class LobbyServer:
 
 
     def start_server(self, host: str, port: int) -> None:
+        self.host = host
+        self.port = port
         self.server_sock.bind((host, port))
         self.server_sock.listen(5)
         self.server_sock.settimeout(1.0)

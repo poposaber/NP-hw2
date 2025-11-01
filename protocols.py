@@ -71,6 +71,80 @@ class Protocols:
         data: additional data as a dictionary
         """
 
+    class ClientToGameServer:
+        CONNECT = MessageFormat({
+            "username": str,
+            "room_id": str,
+            "role": str
+        })
+        """
+        username: player or spectator's username \n
+        room_id: ID of the game room \n
+        role: "player" or "spectator"
+        """
+
+    class GameServerToPlayer:
+        CONNECT_RESPONSE = MessageFormat({
+            "result": str,
+            "role": str,
+            "seed": int,
+            "bagRule": str,
+            "gravityPlan": dict
+        })
+        """
+        result: 'success' or 'failure' \n
+        role: 'player1' or 'player2' \n
+        seed: random seed for the game session \n
+        bagRule: rule for piece bag generation \n
+        gravityPlan: plan for gravity changes during the game
+        """
+        GAME_STARTED = MessageFormat({
+            "player1_username": str,
+            "player2_username": str,
+            "player_health": int,
+            "now_piece": str,
+            "next_pieces": list,
+            "goal_score": int
+        })
+        """
+        player1_username: username of player 1 \n
+        player2_username: username of player 2 \n
+        player_health: initial health of each player \n
+        now_piece: initial piece on the game field, such as "I" or "T" \n
+        next_pieces: initial next pieces, such as ["J", "L", "O"] \n
+        goal_score: score needed to win
+        """
+        GAME_UPDATE = MessageFormat({
+            "player1": dict,
+            "player2": dict,
+            "data": dict
+        })
+        """
+        player1: game state update for player 1 \n
+        player2: game state update for player 2
+        the dictionary mainly contains:
+            'board': string representing the game board, contains width * height chars \n
+            'now_piece': current piece shape \n
+            'color': current piece color \n
+            'position': current piece position \n
+            'next_pieces': list of next piece types \n
+            'score': current score \n
+            'health': current health \n
+            'revive_time': current revive time remaining \n
+        data: additional data as a dictionary, such as game over info
+        """
+
+    class PlayerToGameServer:
+        GAME_ACTION = MessageFormat({
+            "action": str,
+            "data": dict
+        })
+        """
+        action: e.g., 'move_left', 'rotate', 'drop', etc. \n
+        data: additional data as a dictionary
+        """
+
+
 class Words:
     class Collection:
         USER = "user"
@@ -131,6 +205,9 @@ class Words:
         OWNER = "owner"
         SETTINGS = "settings"
         USERS = "users"
+        IS_PLAYING = "is_playing"
+        HOST = "host"
+        PORT = "port"
     class Reason:
         INVALID_CREDENTIALS = "invalid_credentials"
         ROOM_FULL = "room_full"
@@ -146,9 +223,16 @@ class Words:
         USER_LEFT = "user_left"
         ROOM_DISBANDED = "room_disbanded"
         INVITATION_RECEIVED = "invitation_received"
-        GAME_STARTED = "game_started"
+        CONNECT_TO_GAME_SERVER = "connect_to_game_server"
         SERVER_SHUTDOWN = "server_shutdown"
     class ConnectionType:
         CLIENT = "client"
         DATABASE_SERVER = "database_server"
         GAME_SERVER = "game_server"
+    class GameAction:
+        MOVE_LEFT = "move_left"
+        MOVE_RIGHT = "move_right"
+        ROTATE = "rotate"
+        SOFT_DROP = "soft_drop"
+        HARD_DROP = "hard_drop"
+        CHANGE_COLOR = "change_color"
