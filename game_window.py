@@ -47,7 +47,7 @@ class GameWindow:
         # map numeric color/index to an RGB tuple; extend as needed
         palette = {
             0: (20, 20, 20),      # empty background
-            1: (100, 180, 255),   # score / light blue
+            1: (255, 200, 100),   # score / light orange
             2: (120, 255, 140),   # heal / green
             3: (255, 120, 120),   # attack / red
         }
@@ -193,7 +193,8 @@ class GameWindow:
 
             p1_score = state1.get('score', 0) if state1 else 0
             p2_score = state2.get('score', 0) if state2 else 0
-            board_rows = len(state1.get('board', [])) if state1 else 20
+            # since board is a string like "0000111000\n...", we can calculate rows
+            board_rows = len(state1.get('board', "").splitlines()) if state1 else 20
             #self.draw_text(f"Score: {p1_score}", (20, 50 + board_rows * self.CELL_SIZE + 8))
             #self.draw_text(f"Score: {p2_score}", (420, 50 + board_rows * self.CELL_SIZE + 8))
             self.draw_health_bar(20, 50 + board_rows * self.CELL_SIZE + 36, state1.get('health', 100) if state1 else 0)
