@@ -13,12 +13,13 @@ import getpass
 import sys
 import os
 import time
+import random
 
 class Client:
     def __init__(self) -> None:
         self.host = ""
         self.lobby_msgfmt_passer = MessageFormatPasser(timeout=1.0)
-        self.game_msgfmt_passer = MessageFormatPasser(timeout=1.0)
+        self.game_msgfmt_passer: MessageFormatPasser | None = None
         self.temp_username: str | None = None
         self.info = UserInfo()
         self.listen_thread = threading.Thread(target=self.listen_for_messages)
@@ -406,6 +407,7 @@ class Client:
 
     def play_game(self):
         print("playing game...")
+        self.game_msgfmt_passer.send_args(Protocols.PlayerToGameServer.GAME_ACTION, Words.GameAction.READY, {})
         self.game_window = GameWindow(game_server_passer=self.game_msgfmt_passer, player_id=self.player_id)
         self.listen_game_thread = threading.Thread(target=self.listen_for_game_messages)
         self.listen_game_thread.start()
@@ -420,12 +422,18 @@ class Client:
         player1_username, player2_username, player_health, now_piece, next_pieces, goal_score = self.game_msgfmt_passer.receive_args(Protocols.GameServerToPlayer.GAME_STARTED)
         self.game_window.init_player_info(player1_username, player2_username, player_health, now_piece, next_pieces, goal_score)
         while True:
-            state1, state2, data = self.game_msgfmt_passer.receive_args(Protocols.GameServerToPlayer.GAME_UPDATE)
-            with self.game_window.game_update_lock:
-                self.game_window.game_update_temp['state1'] = state1
-                self.game_window.game_update_temp['state2'] = state2
-                self.game_window.game_update_temp['data'] = data
-            if 'game_over' in data:
+            try:
+                state1, state2, data = self.game_msgfmt_passer.receive_args(Protocols.GameServerToPlayer.GAME_UPDATE)
+                with self.game_window.game_update_lock:
+                    self.game_window.game_update_temp['state1'] = state1
+                    self.game_window.game_update_temp['state2'] = state2
+                    self.game_window.game_update_temp['data'] = data
+                if 'game_over' in data:
+                    break
+            except TimeoutError:
+                continue
+            except Exception as e:
+                print(f"Error listening for game messages: {e}")
                 break
 
     def get_input(self):
@@ -625,8 +633,13 @@ class Client:
                         pass
 
                     # create fresh passer and connect
-                    self.game_msgfmt_passer = MessageFormatPasser(timeout=2.0)
-                    self.game_msgfmt_passer.connect(host, port)
+                    #time.sleep(3 + random.randint(0, 4))  # wait a bit to ensure game server is ready
+                    #print(f"Time sleep done. Connecting to game server at {host}:{port}...")
+                    #print(f"host type: {type(host)}, port type: {type(port)}")
+                    self.game_msgfmt_passer = MessageFormatPasser()
+                    self.game_msgfmt_passer.connect(host, int(port))
+
+                    print("Connected to game server. Sending connect handshake...")
 
                     # send client->server connect handshake (game server expects this)
                     self.game_msgfmt_passer.send_args(Protocols.ClientToGameServer.CONNECT, self.info.name, self.info.current_room_id, 'player')

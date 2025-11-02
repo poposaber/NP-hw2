@@ -15,6 +15,7 @@ class Game:
 
 
     def handle_player_action(self, player_id: str, action: str, data: dict) -> None:
+        print(f"Handling action from {player_id}: {action} with data {data}")
         if player_id == "player1":
             tetris = self.tetris1
         else:

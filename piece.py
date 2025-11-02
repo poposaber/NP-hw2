@@ -1,4 +1,5 @@
 # this class defines a piece in Tetris
+from __future__ import annotations
 
 class Piece:
     def __init__(self, shape: list[list[int]], position: tuple[int, int], type_name: str) -> None:
@@ -19,6 +20,9 @@ class Piece:
             self.position = (self.position[0], self.position[1] + 1)
         elif direction == "down":
             self.position = (self.position[0] + 1, self.position[1])
+
+    def copy(self) -> Piece:
+        return Piece([row[:] for row in self.shape], self.position, self.type_name)
 
 class Pieces:
     T = Piece([[0, 1, 0], 

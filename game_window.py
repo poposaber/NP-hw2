@@ -3,6 +3,8 @@ import pygame.freetype
 from message_format_passer import MessageFormatPasser
 from protocols import Protocols, Words
 from player_info import PlayerInfo
+from tetris import Tetris
+from piece import Pieces
 import threading
 import time
 
@@ -56,18 +58,20 @@ class GameWindow:
         b = (idx * 151) % 200 + 30
         return (r, g, b)
     
-    def draw_board(self, board, topleft):
+    def draw_board(self, board: str, topleft: tuple[int, int]):
         if board is None:
             return
-        rows = len(board)
-        cols = len(board[0]) if rows > 0 else 0
+        
+        board_int_list = Tetris.from_board_string(board)
+        rows = len(board_int_list)
+        cols = len(board_int_list[0]) if rows > 0 else 0
         cx, cy = topleft
         cell = self.CELL_SIZE
         pad = self.CELL_PADDING
         pygame.draw.rect(self.screen, (40, 40, 40), (cx - 2, cy - 2, cols * cell + 4, rows * cell + 4))
         for r in range(rows):
             for c in range(cols):
-                val = board[r][c]
+                val = board_int_list[r][c]
                 if val == 0:
                     color = (25, 25, 25)
                 else:
@@ -77,7 +81,7 @@ class GameWindow:
                 pygame.draw.rect(self.screen, color, rect)
                 pygame.draw.rect(self.screen, (15, 15, 15), rect, 1)
 
-    def draw_piece(self, shape, position, color_idx, topleft):
+    def draw_piece(self, shape: list[list[int]], position: tuple[int, int], color_idx: int, topleft: tuple[int, int]):
         if shape is None or position is None:
             return
         board_cx, board_cy = topleft
@@ -93,30 +97,36 @@ class GameWindow:
                     pygame.draw.rect(self.screen, color, rect)
                     pygame.draw.rect(self.screen, (15, 15, 15), rect, 1)
 
-    def draw_next_pieces(self, next_pieces, topleft):
+    def draw_next_pieces(self, next_pieces: list[str], topleft: tuple[int, int]):
         if not next_pieces:
             return
         px, py = topleft
         cell = int(self.CELL_SIZE * self.PREVIEW_SCALE)
         pad = 2
-        for i, p in enumerate(next_pieces[:5]):
+        for i, p in enumerate(next_pieces): # next pieces: ["O", "I", ...]
             shape = None
-            color_idx = 1
-            if isinstance(p, dict):
-                shape = p.get("shape")
-                color_idx = p.get("color", 1)
-            elif hasattr(p, "shape"):
-                shape = p.shape
-                color_idx = getattr(p, "color", 1)
-            else:
-                shape = [[1]]
+            match p:
+                case "T":
+                    shape = Pieces.T.shape
+                case "I":
+                    shape = Pieces.I.shape
+                case "O":
+                    shape = Pieces.O.shape
+                case "L":
+                    shape = Pieces.L.shape
+                case "J":
+                    shape = Pieces.J.shape
+                case "S":
+                    shape = Pieces.S.shape
+                case "Z":
+                    shape = Pieces.Z.shape
             sx = px
             sy = py + i * (cell * 3 + 8)
             for r in range(len(shape)):
                 for c in range(len(shape[0])):
                     if shape[r][c]:
                         rect = (sx + c * cell + pad, sy + r * cell + pad, cell - 2*pad, cell - 2*pad)
-                        pygame.draw.rect(self.screen, self._color_from_index(color_idx), rect)
+                        pygame.draw.rect(self.screen, (200, 200, 200), rect) # next piece color can be fixed
                         pygame.draw.rect(self.screen, (15, 15, 15), rect, 1)
 
     def draw_health_bar(self, x, y, health, max_health=40, width=160, height=14):
@@ -166,23 +176,17 @@ class GameWindow:
 
             if state1:
                 now_piece1 = state1.get('now_piece')
-                if isinstance(now_piece1, dict):
-                    shape1 = now_piece1.get('shape')
-                    pos1 = now_piece1.get('position')
-                else:
-                    shape1 = getattr(now_piece1, 'shape', None)
-                    pos1 = getattr(now_piece1, 'position', None)
-                self.draw_piece(shape1, pos1, state1.get('color', 1), board_left)
+                now_piece1_color = state1.get('color', 1)
+                now_piece1_pos = state1.get('position')
+                # now_piece1 is just a list like [[0,1,0],[1,1,1],[0,0,0]]
+
+                self.draw_piece(now_piece1, now_piece1_pos, now_piece1_color, board_left)
 
             if state2:
                 now_piece2 = state2.get('now_piece')
-                if isinstance(now_piece2, dict):
-                    shape2 = now_piece2.get('shape')
-                    pos2 = now_piece2.get('position')
-                else:
-                    shape2 = getattr(now_piece2, 'shape', None)
-                    pos2 = getattr(now_piece2, 'position', None)
-                self.draw_piece(shape2, pos2, state2.get('color', 1), board_right)
+                now_piece2_color = state2.get('color', 1)
+                now_piece2_pos = state2.get('position')
+                self.draw_piece(now_piece2, now_piece2_pos, now_piece2_color, board_right)
 
             self.draw_next_pieces(state1.get('next_pieces') if state1 else None, (20 + 10 * self.CELL_SIZE, 50))
             self.draw_next_pieces(state2.get('next_pieces') if state2 else None, (420 + 10 * self.CELL_SIZE, 50))
@@ -205,6 +209,8 @@ class GameWindow:
                 self.draw_text(f"Game Over! Winner: {winner}", (300, 300), color=(255, 0, 0))
                 if self.game_over_time_remaining <= 0:
                     self.running = False
+        else:
+            self.draw_text("Waiting for game data...", (300, 300), color=(200, 200, 200))
                 
 
         pygame.display.flip()
@@ -244,9 +250,11 @@ class GameWindow:
 
                             if key_action:
                                 if color is not None:
-                                    self.game_server_passer.send_args(Protocols.PlayerToGameServer.GAME_ACTION, self.player_id, key_action, {"color": color})
+                                    self.game_server_passer.send_args(Protocols.PlayerToGameServer.GAME_ACTION, key_action, {"color": color})
+                                    print(f"Sent action: {key_action} with color {color}")
                                 else:
-                                    self.game_server_passer.send_args(Protocols.PlayerToGameServer.GAME_ACTION, self.player_id, key_action, {})
+                                    self.game_server_passer.send_args(Protocols.PlayerToGameServer.GAME_ACTION, key_action, {})
+                                    print(f"Sent action: {key_action}")
             
             self.update()
             clock.tick(60)

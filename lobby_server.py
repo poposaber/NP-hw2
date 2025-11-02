@@ -540,6 +540,7 @@ class LobbyServer:
                     self.game_server_threads[current_room_id] = threading.Thread(target=self.game_servers[current_room_id].start)
                     self.game_server_threads[current_room_id].start()
                     started = True
+                    self.game_servers[current_room_id].wait_until_started()
                     time.sleep(0.5)  # Give some time for the server to start
                     break
                 except OSError as e:
@@ -611,10 +612,14 @@ class LobbyServer:
                 cmd = input("Enter 'stop' to stop the server: ")
                 if cmd == 'stop':
                     self.shutdown_event.set()
+                    for game_server in self.game_servers.values():
+                        game_server.stop()
                     break
                 else:
                     print("invalid command.")
         except KeyboardInterrupt:
             self.shutdown_event.set()
+            for game_server in self.game_servers.values():
+                    game_server.stop()
 
         server_thread.join()

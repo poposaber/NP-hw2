@@ -8,8 +8,8 @@ class Tetris:
         self.board = [[0 for _ in range(Tetris.SIZE[1])] for _ in range(Tetris.SIZE[0])] # self.board[<row>][<col>]; 0 means empty cell, 1 means score cell, 2 means heal cell, 3 means attack cell
         self.seed = seed
         self.rng = random.Random(seed)
-        self.now_piece: Piece = self.rng.choice(Tetris.PIECE_LIST)
-        self.next_piece_list: list[Piece] = [self.rng.choice(Tetris.PIECE_LIST) for _ in range(3)]
+        self.now_piece: Piece = self.rng.choice(Tetris.PIECE_LIST).copy()
+        self.next_piece_list: list[Piece] = [self.rng.choice(Tetris.PIECE_LIST).copy() for _ in range(3)]
         self.gravity_time: float = gravity_time
         self.gravity_timer: float = 0.0
         self.paused: bool = False
@@ -31,6 +31,7 @@ class Tetris:
     def drop_piece_one_step(self) -> None:
         if self.now_piece is not None and self.now_piece_can_move("down"):
             self.now_piece.move("down")
+            #print("Dropped piece one step down")
         else:
             self.lock_piece()
 
@@ -53,12 +54,12 @@ class Tetris:
         return False
 
     def now_piece_can_rotate(self) -> bool:
-        temp_piece = Piece([row[:] for row in self.now_piece.shape], self.now_piece.position)
+        temp_piece = Piece([row[:] for row in self.now_piece.shape], self.now_piece.position, self.now_piece.type_name) # fix here
         temp_piece.rotate()
         return not self.check_collide(temp_piece)
     
     def try_rotate_now_piece(self) -> None:
-        temp_piece = Piece([row[:] for row in self.now_piece.shape], self.now_piece.position)
+        temp_piece = Piece([row[:] for row in self.now_piece.shape], self.now_piece.position, self.now_piece.type_name)
         temp_piece.rotate()
         if not self.check_collide(temp_piece):
             self.now_piece.rotate()
@@ -73,7 +74,7 @@ class Tetris:
 
 
     def now_piece_can_move(self, direction: str) -> bool:
-        temp_piece = Piece([row[:] for row in self.now_piece.shape], self.now_piece.position)
+        temp_piece = Piece([row[:] for row in self.now_piece.shape], self.now_piece.position, self.now_piece.type_name)
         temp_piece.move(direction)
         return not self.check_collide(temp_piece)
 
@@ -93,7 +94,7 @@ class Tetris:
                             self.board[board_row][board_col] = self.now_piece.shape[r][c] * pre_color
             self.now_piece = self.next_piece_list.pop(0)
             self.now_piece.color = pre_color
-            self.next_piece_list.append(self.rng.choice(Tetris.PIECE_LIST))
+            self.next_piece_list.append(self.rng.choice(Tetris.PIECE_LIST).copy())
             self.gravity_timer = 0.0
 
     def clear_full_lines(self) -> None:

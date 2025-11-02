@@ -15,7 +15,7 @@ class MessageFormat:
             if not isinstance(value, tp):
                 raise TypeError(f"Expected {tp} for field '{key}', got {type(value)}")
             result_dict[key] = value
-        print(f"Formatted dict: {result_dict}")
+        #print(f"Formatted dict: {result_dict}")
         return json.dumps(result_dict)
     
     def to_arg_list(self, json_str: str) -> list:
@@ -28,5 +28,5 @@ class MessageFormat:
             if not isinstance(value, tp):
                 raise TypeError(f"Expected {tp} for field '{key}', got {type(value)}")
             result_list.append(value)
-        print(f"Extracted args: {result_list}")
+        #print(f"Extracted args: {result_list}")
         return result_list

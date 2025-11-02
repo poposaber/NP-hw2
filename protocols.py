@@ -110,7 +110,7 @@ class Protocols:
         player1_username: username of player 1 \n
         player2_username: username of player 2 \n
         player_health: initial health of each player \n
-        now_piece: initial piece on the game field, such as "I" or "T" \n
+        now_piece: initial piece on the game field, such as "I" \n
         next_pieces: initial next pieces, such as ["J", "L", "O"] \n
         goal_score: score needed to win
         """
@@ -124,10 +124,10 @@ class Protocols:
         player2: game state update for player 2
         the dictionary mainly contains:
             'board': string representing the game board, contains width * height chars \n
-            'now_piece': current piece shape \n
+            'now_piece': current piece shape (list) \n
             'color': current piece color \n
             'position': current piece position \n
-            'next_pieces': list of next piece types \n
+            'next_pieces': list of next piece types (list[str]) \n
             'score': current score \n
             'health': current health \n
             'revive_time': current revive time remaining \n
@@ -140,7 +140,7 @@ class Protocols:
             "data": dict
         })
         """
-        action: e.g., 'move_left', 'rotate', 'drop', etc. \n
+        action: e.g., 'move_left', 'rotate', 'drop', 'ready', etc. \n
         data: additional data as a dictionary
         """
 
@@ -236,3 +236,4 @@ class Words:
         SOFT_DROP = "soft_drop"
         HARD_DROP = "hard_drop"
         CHANGE_COLOR = "change_color"
+        READY = "ready"

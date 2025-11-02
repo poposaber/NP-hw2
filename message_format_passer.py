@@ -9,8 +9,11 @@ RECEIVE_ACTUAL_MESSAGE_TIMEOUT = 20.0
 
 class MessageFormatPasser:
     """This class handles sending and receiving MessageFormat objects over a TCP socket."""
-    def __init__(self, sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM), timeout: float | None = None) -> None:
-        self.sock = sock
+    def __init__(self, sock: socket.socket | None = None, timeout: float | None = None) -> None:
+        if sock is None:
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        else:
+            self.sock = sock
         if timeout is not None:
             if timeout <= 0:
                 raise ValueError("Timeout must be positive")
@@ -30,7 +33,7 @@ class MessageFormatPasser:
         json_data = msgfmt.to_json(*args)
         # Prefix the JSON data with its length (4 bytes, network byte order)
         sending_data = struct.pack('!I', len(json_data)) + json_data.encode('utf-8')
-        print(f"Sending message: {sending_data}")
+        #print(f"Sending message: {sending_data}")
         self.sock.send(sending_data)
 
     def read_exactly(self, num_bytes: int) -> bytes:
@@ -48,11 +51,11 @@ class MessageFormatPasser:
     def receive_args(self, msgfmt: MessageFormat) -> list:
         # Read the prefix (exactly 4 bytes) to determine the length of the incoming message
         length_prefix = self.read_exactly(4)
-        print(f"Received length prefix: {length_prefix}")
+        #print(f"Received length prefix: {length_prefix}")
         if not length_prefix:
             raise ConnectionError("Connection closed")
         message_length = struct.unpack('!I', length_prefix)[0]
-        print(f"Message length: {message_length}")
+        #print(f"Message length: {message_length}")
         if message_length <= 0:
             raise ValueError("Received message with non-positive length")
         elif message_length > LENGTH_LIMIT:
@@ -61,7 +64,7 @@ class MessageFormatPasser:
         # Now read the actual message data
         self.sock.settimeout(None)
         json_data = self.read_exactly(message_length).decode("utf-8")
-        print(f"Received message: {json_data}")
+        #print(f"Received message: {json_data}")
         return msgfmt.to_arg_list(json_data)
     
     def close(self) -> None:

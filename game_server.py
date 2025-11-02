@@ -30,6 +30,12 @@ class GameServer:
         self.action_queue: Queue = Queue()
         self.running = threading.Event()
         self.running.set()
+        self.start_accepted_event = threading.Event()
+        self.player1_ready = threading.Event()
+        self.player2_ready = threading.Event()
+
+    def wait_until_started(self) -> None:
+        self.start_accepted_event.wait()
 
     def start(self) -> None:
         self.server_socket.bind((self.host, self.port))
@@ -37,6 +43,7 @@ class GameServer:
         print(f"Game server listening on {self.host}:{self.port}")
         while self.running.is_set():
             try:
+                self.start_accepted_event.set()
                 client_socket, addr = self.server_socket.accept()
                 print(f"Accepted connection from {addr}")
                 passer = MessageFormatPasser(client_socket)
@@ -74,9 +81,6 @@ class GameServer:
                     if self.player1_passer is not None and self.player2_passer is not None:
                         print("Two players connected, starting game session")
 
-                        self.player1_passer.send_args(Protocols.GameServerToPlayer.GAME_STARTED, self.player1_username, self.player2_username, self.game.player1.health, self.game.tetris1.now_piece.type_name, [piece.type_name for piece in self.game.tetris1.next_piece_list], self.game.goal_score)
-                        self.player2_passer.send_args(Protocols.GameServerToPlayer.GAME_STARTED, self.player1_username, self.player2_username, self.game.player2.health, self.game.tetris2.now_piece.type_name, [piece.type_name for piece in self.game.tetris2.next_piece_list], self.game.goal_score)
-
                         self.game_thread = threading.Thread(target=self.handle_game_session)
                         self.game_thread.start()
 
@@ -87,9 +91,10 @@ class GameServer:
                         self.handle_player2_thread.start()
             except TimeoutError:
                 continue
-            except KeyboardInterrupt:
-                print("Shutting down server...")
-        self.stop()
+            except Exception as e:
+                print(f"Error accepting connections: {e}")
+        print("Game server stopping acceptance of new connections.")
+        self.running.clear()
 
 
     def handle_player(self, passer: MessageFormatPasser, player_id: str) -> None:
@@ -133,6 +138,36 @@ class GameServer:
         now = time.time()
         prev = now
         try:
+            while not (self.player1_ready.is_set() and self.player2_ready.is_set()):
+                player_id, action, data = self.action_queue.get()
+                if action == Words.GameAction.READY:
+                    if player_id == "player1":
+                        self.player1_ready.set()
+                        print("Player 1 is ready")
+                    else:
+                        self.player2_ready.set()
+                        print("Player 2 is ready")
+                        
+                else:
+                    print(f"Received non-ready action {action} from {player_id} before both players were ready, ignoring.")
+                time.sleep(0.1)
+            self.player1_passer.send_args(Protocols.GameServerToPlayer.GAME_STARTED,
+                                          self.player1_username,
+                                          self.player2_username,
+                                          self.game.player1.health,
+                                          self.game.tetris1.now_piece.type_name if self.game.tetris1.now_piece else None,
+                                          [piece.type_name for piece in self.game.tetris1.next_piece_list],
+                                          self.game.goal_score)
+            self.player2_passer.send_args(Protocols.GameServerToPlayer.GAME_STARTED,
+                                          self.player1_username,
+                                          self.player2_username,
+                                          self.game.player2.health,
+                                          self.game.tetris2.now_piece.type_name if self.game.tetris2.now_piece else None,
+                                          [piece.type_name for piece in self.game.tetris2.next_piece_list],
+                                          self.game.goal_score)
+            
+            print("Both players are ready. Starting the game loop.")
+
             while self.running.is_set():
                 # Process all queued actions
                 while not self.action_queue.empty():
