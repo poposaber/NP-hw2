@@ -14,7 +14,7 @@ class Tetris:
         self.gravity_timer: float = 0.0
         self.paused: bool = False
         self.recent_cleared_cells: list[int] = [0, 0, 0, 0] # index 0: empty, 1: score, 2: heal, 3: attack
-        
+        self.board_dead: bool = False
 
 
     def clear_board(self) -> None:
@@ -95,6 +95,8 @@ class Tetris:
             self.now_piece = self.next_piece_list.pop(0)
             self.now_piece.color = pre_color
             self.next_piece_list.append(self.rng.choice(Tetris.PIECE_LIST).copy())
+            if self.check_collide(self.now_piece):
+                self.board_dead = True
             self.gravity_timer = 0.0
 
     def clear_full_lines(self) -> None:
@@ -115,8 +117,10 @@ class Tetris:
                     each_total_cells_cleared[i] += temp_cell_list[i]
                 self.board[row] = [0 for _ in range(Tetris.SIZE[1])]
             else:
-                self.board[row_index] = self.board[row]
+                self.board[row_index] = self.board[row].copy() # move down non-full line, use copy to avoid reference issue
                 row_index -= 1
+        for r in range(row_index, -1, -1):
+            self.board[r] = [0 for _ in range(Tetris.SIZE[1])] # fill the top empty rows
         self.recent_cleared_cells = each_total_cells_cleared
     
     def update(self, delta_time: float) -> None:

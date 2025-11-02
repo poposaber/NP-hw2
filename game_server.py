@@ -94,7 +94,7 @@ class GameServer:
             except Exception as e:
                 print(f"Error accepting connections: {e}")
         print("Game server stopping acceptance of new connections.")
-        self.running.clear()
+        self.stop()
 
 
     def handle_player(self, passer: MessageFormatPasser, player_id: str) -> None:
@@ -119,20 +119,25 @@ class GameServer:
             print(f"{player_id} disconnected unexpectedly")
             with self.lock:
                 if player_id == "player1":
-                    self.player1_passer.close()
+                    if self.player1_passer is not None:
+                        self.player1_passer.close()
                     self.player1_passer = None
                 else:
-                    self.player2_passer.close()
+                    if self.player2_passer is not None:
+                        self.player2_passer.close()
                     self.player2_passer = None
         except Exception as e:
             print(f"Error handling {player_id}: {e}")
             with self.lock:
                 if player_id == "player1":
-                    self.player1_passer.close()
+                    if self.player1_passer is not None:
+                        self.player1_passer.close()
                     self.player1_passer = None
                 else:
-                    self.player2_passer.close()
+                    if self.player2_passer is not None:
+                        self.player2_passer.close()
                     self.player2_passer = None
+        print(f"Exiting handler for {player_id}")
 
     def handle_game_session(self) -> None:
         now = time.time()
@@ -150,7 +155,10 @@ class GameServer:
                         
                 else:
                     print(f"Received non-ready action {action} from {player_id} before both players were ready, ignoring.")
-                time.sleep(0.1)
+                # time.sleep(0.1)
+            if self.player1_passer is None or self.player2_passer is None:
+                print("One of the players disconnected before game start, aborting game session.")
+                return
             self.player1_passer.send_args(Protocols.GameServerToPlayer.GAME_STARTED,
                                           self.player1_username,
                                           self.player2_username,
@@ -203,29 +211,42 @@ class GameServer:
                 if self.game.gameover:
                     data["game_over"] = True
                     data["winner"] = self.game.winner
-                    self.running.clear()  # Stop the game loop
+                    
                 with self.lock:
                     if self.player1_passer is not None:
                         self.player1_passer.send_args(Protocols.GameServerToPlayer.GAME_UPDATE, state1, state2, data)
                     if self.player2_passer is not None:
                         self.player2_passer.send_args(Protocols.GameServerToPlayer.GAME_UPDATE, state1, state2, data) # send same state to player2 for simplicity
-
+                if self.game.gameover:
+                    print(f"Game over! Winner: {self.game.winner}")
+                    time.sleep(5.0) # wait before ending the session
+                    self.stop()  # Stop the game loop
                 time.sleep(0.1)  # Sleep to limit update rate
         except Exception as e:
             print(f"Error in game session: {e}")
+        print("Game session ended.")
 
     def stop(self) -> None:
         self.running.clear()
-        self.server_socket.close()
-        if self.game_thread is not None:
+        try:
+            self.server_socket.close()
+        except Exception as e:
+            pass
+        if self.game_thread is not None and self.game_thread.is_alive() and threading.current_thread() != self.game_thread:
             self.game_thread.join()
-        if self.handle_player1_thread is not None:
+        if self.handle_player1_thread is not None and self.handle_player1_thread.is_alive() and threading.current_thread() != self.handle_player1_thread:
             self.handle_player1_thread.join()
-        if self.handle_player2_thread is not None:
+        if self.handle_player2_thread is not None and self.handle_player2_thread.is_alive() and threading.current_thread() != self.handle_player2_thread:
             self.handle_player2_thread.join()
         with self.lock:
             if self.player1_passer is not None:
-                self.player1_passer.close()
+                try:
+                    self.player1_passer.close()
+                except Exception as e:
+                    pass
             if self.player2_passer is not None:
-                self.player2_passer.close()
+                try:
+                    self.player2_passer.close()
+                except Exception as e:
+                    pass
         print("Server shut down.")

@@ -1,7 +1,3 @@
-# next objective:
-# 1. implement client-side handling of invitations: accept or decline.
-# 2. tackle with prompt display after events are printed.
-
 from message_format_passer import MessageFormatPasser
 from protocols import Protocols, Words
 from user_info import UserInfo
@@ -511,6 +507,7 @@ class Client:
                             print("Only the room owner can start the game.")
                             continue
                         self.start_game()
+                        self.play_game()
                     case "play":
                         if not self.info.name:
                             print("You are not logged in.")

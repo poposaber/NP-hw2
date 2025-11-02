@@ -1,5 +1,6 @@
 # next objective: 
-# 
+# 1. after game over, delete the game server instance and thread in lobby server, and tell database server to set is_playing to False.
+# 2. handle client disconnection during game.
 
 from message_format_passer import MessageFormatPasser
 from protocols import Protocols, Words
