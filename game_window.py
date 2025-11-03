@@ -1,6 +1,3 @@
-# next objective:
-# 1. adjust winning display position.
-
 import pygame
 import pygame.freetype
 from message_format_passer import MessageFormatPasser
@@ -256,11 +253,17 @@ class GameWindow:
                 self.game_over = True
             if self.game_over:
                 self.game_over_time_remaining -= delta_time
-                self.draw_text(f"Game Over! Winner: {data.get('winner')}", (300, 300), color=(255, 255, 255))
+                if 'winner' in data and 'message' in data:
+                    self.draw_text(f"Game Over! Winner: {data.get('winner')} \n {data.get('message')}", (150, 150), color=(255, 255, 255))
+                elif 'winner' in data:
+                    self.draw_text(f"Game Over! Winner: {data.get('winner')}", (250, 250), color=(255, 255, 255))
+                elif 'message' in data:
+                    self.draw_text(f"Game Over! {data.get('message')}", (150, 150), color=(255, 255, 255))
+                
                 if self.game_over_time_remaining <= 0:
                     self.running = False
         else:
-            self.draw_text("Waiting for game data...", (300, 300), color=(200, 200, 200))
+            self.draw_text("Waiting for game data...", (250, 250), color=(200, 200, 200))
                 
 
         pygame.display.flip()

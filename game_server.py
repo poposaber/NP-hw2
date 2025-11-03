@@ -1,4 +1,4 @@
-# next objective: implement a queue for incoming player actions and process them in the game loop
+
 
 from message_format_passer import MessageFormatPasser
 from protocols import Protocols, Words
@@ -33,6 +33,9 @@ class GameServer:
         self.start_accepted_event = threading.Event()
         self.player1_ready = threading.Event()
         self.player2_ready = threading.Event()
+        self.player1_disconnected = threading.Event()
+        self.player2_disconnected = threading.Event()
+        
 
     def wait_until_started(self) -> None:
         self.start_accepted_event.wait()
@@ -108,6 +111,7 @@ class GameServer:
                             self.player1_passer = None
                         else:
                             self.player2_passer = None
+                    self.action_queue.put((player_id, Words.GameAction.DISCONNECT, {}))
                     break
                 action, data = arg_list
                 # Process player action
@@ -126,6 +130,7 @@ class GameServer:
                     if self.player2_passer is not None:
                         self.player2_passer.close()
                     self.player2_passer = None
+            self.action_queue.put((player_id, Words.GameAction.DISCONNECT, {}))
         except Exception as e:
             print(f"Error handling {player_id}: {e}")
             with self.lock:
@@ -137,6 +142,7 @@ class GameServer:
                     if self.player2_passer is not None:
                         self.player2_passer.close()
                     self.player2_passer = None
+            self.action_queue.put((player_id, Words.GameAction.DISCONNECT, {}))
         print(f"Exiting handler for {player_id}")
 
     def handle_game_session(self) -> None:
@@ -152,6 +158,25 @@ class GameServer:
                     else:
                         self.player2_ready.set()
                         print("Player 2 is ready")
+                elif action == Words.GameAction.DISCONNECT:
+                    print(f"{player_id} disconnected before game start, aborting game session.")
+                    if player_id == "player1":
+                        if self.player2_passer is not None:
+                            self.player2_passer.send_args(Protocols.GameServerToPlayer.GAME_START_RESULT, 
+                                                    Words.Result.FAILURE,
+                                                    "Player 1 disconnected before game start", 
+                                                    "", "", 0, "", [], 0)
+                        self.game.gameover = True
+                        self.running.clear()
+                    else:
+                        if self.player1_passer is not None:
+                            self.player1_passer.send_args(Protocols.GameServerToPlayer.GAME_START_RESULT, 
+                                                    Words.Result.FAILURE,
+                                                    "Player 2 disconnected before game start", 
+                                                    "", "", 0, "", [], 0)
+                        self.game.gameover = True
+                        self.running.clear()
+                    return
                         
                 else:
                     print(f"Received non-ready action {action} from {player_id} before both players were ready, ignoring.")
@@ -159,14 +184,18 @@ class GameServer:
             if self.player1_passer is None or self.player2_passer is None:
                 print("One of the players disconnected before game start, aborting game session.")
                 return
-            self.player1_passer.send_args(Protocols.GameServerToPlayer.GAME_STARTED,
+            self.player1_passer.send_args(Protocols.GameServerToPlayer.GAME_START_RESULT, 
+                                          Words.Result.SUCCESS,
+                                          "Game started successfully",
                                           self.player1_username,
                                           self.player2_username,
                                           self.game.player1.health,
                                           self.game.tetris1.now_piece.type_name if self.game.tetris1.now_piece else None,
                                           [piece.type_name for piece in self.game.tetris1.next_piece_list],
                                           self.game.goal_score)
-            self.player2_passer.send_args(Protocols.GameServerToPlayer.GAME_STARTED,
+            self.player2_passer.send_args(Protocols.GameServerToPlayer.GAME_START_RESULT, 
+                                          Words.Result.SUCCESS,
+                                          "Game started successfully",
                                           self.player1_username,
                                           self.player2_username,
                                           self.game.player2.health,
@@ -180,6 +209,17 @@ class GameServer:
                 # Process all queued actions
                 while not self.action_queue.empty():
                     player_id, action, data = self.action_queue.get()
+                    if action == Words.GameAction.DISCONNECT:
+                        print(f"{player_id} disconnected, ending game session.")
+                        if player_id == "player1":
+                            self.game.winner = "player2"
+                            self.game.gameover = True
+                            self.player1_disconnected.set()
+                        else:
+                            self.game.winner = "player1"
+                            self.game.gameover = True
+                            self.player2_disconnected.set()
+                        continue
                     self.game.handle_player_action(player_id, action, data)
 
                 now = time.time()
@@ -211,6 +251,10 @@ class GameServer:
                 if self.game.gameover:
                     data["game_over"] = True
                     data["winner"] = self.game.winner
+                    if self.player1_disconnected.is_set():
+                        data["message"] = "Player 1 disconnected"
+                    elif self.player2_disconnected.is_set():
+                        data["message"] = "Player 2 disconnected"
                     
                 with self.lock:
                     if self.player1_passer is not None:

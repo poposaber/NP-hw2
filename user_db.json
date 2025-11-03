@@ -1,8 +1,8 @@
 {
   "barry": {
     "password": "bababab",
-    "games_played": 0,
-    "games_won": 0,
+    "games_played": 10,
+    "games_won": 5,
     "online": false,
     "current_room_id": null
   },
@@ -29,8 +29,8 @@
   },
   "aaron": {
     "password": "qwerty",
-    "games_played": 0,
-    "games_won": 0,
+    "games_played": 10,
+    "games_won": 5,
     "online": false,
     "current_room_id": null
   },

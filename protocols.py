@@ -98,7 +98,9 @@ class Protocols:
         bagRule: rule for piece bag generation \n
         gravityPlan: plan for gravity changes during the game
         """
-        GAME_STARTED = MessageFormat({
+        GAME_START_RESULT = MessageFormat({
+            "result": str,
+            "message": str, 
             "player1_username": str,
             "player2_username": str,
             "player_health": int,
@@ -107,6 +109,8 @@ class Protocols:
             "goal_score": int
         })
         """
+        result: 'success' or 'failure' \n
+        message: additional information \n
         player1_username: username of player 1 \n
         player2_username: username of player 2 \n
         player_health: initial health of each player \n
@@ -158,6 +162,8 @@ class Words:
         QUERY = "query"
         ADD_USER = "add_user"
         REMOVE_USER = "remove_user"
+        ADD_WIN = "add_win"
+        ADD_GAME_PLAYED = "add_game_played"
     class Command:
         EXIT = "exit"
         CHECK_USERNAME = "check_username" # Check if a username is available to register
@@ -237,3 +243,4 @@ class Words:
         HARD_DROP = "hard_drop"
         CHANGE_COLOR = "change_color"
         READY = "ready"
+        DISCONNECT = "disconnect"

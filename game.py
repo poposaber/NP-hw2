@@ -17,8 +17,14 @@ class Game:
     def handle_player_action(self, player_id: str, action: str, data: dict) -> None:
         print(f"Handling action from {player_id}: {action} with data {data}")
         if player_id == "player1":
+            if not self.player1.is_alive():
+                print("Player 1 is dead, action ignored.")
+                return
             tetris = self.tetris1
         else:
+            if not self.player2.is_alive():
+                print("Player 2 is dead, action ignored.")
+                return
             tetris = self.tetris2
         match action:
             case Words.GameAction.MOVE_LEFT:

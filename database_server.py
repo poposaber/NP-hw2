@@ -113,6 +113,23 @@ class DatabaseServer:
                                     self.user_db[username][key] = value
                             self.send_response(request_id, Words.Result.SUCCESS, {Words.DataParamKey.MESSAGE: "User updated successfully."})
                         self.save_user_db()
+                    case Words.Action.ADD_WIN:
+                        username = data.get(Words.DataParamKey.USERNAME)
+                        if username not in self.user_db:
+                            self.send_response(request_id, Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "User not found."})
+                        else:
+                            self.user_db[username][Words.DataParamKey.GAMES_WON] += 1
+                            self.user_db[username][Words.DataParamKey.GAMES_PLAYED] += 1
+                            self.save_user_db()
+                            self.send_response(request_id, Words.Result.SUCCESS, {Words.DataParamKey.MESSAGE: "Win recorded successfully."})
+                    case Words.Action.ADD_GAME_PLAYED:
+                        username = data.get(Words.DataParamKey.USERNAME)
+                        if username not in self.user_db:
+                            self.send_response(request_id, Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "User not found."})
+                        else:
+                            self.user_db[username][Words.DataParamKey.GAMES_PLAYED] += 1
+                            self.save_user_db()
+                            self.send_response(request_id, Words.Result.SUCCESS, {Words.DataParamKey.MESSAGE: "Game played recorded successfully."})
                     case _:
                         self.send_response(request_id, Words.Result.ERROR, {Words.DataParamKey.MESSAGE: f"Unknown action: {action}"})
             case Words.Collection.ROOM:

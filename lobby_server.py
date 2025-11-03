@@ -1,6 +1,5 @@
-# next objective: 
-# 1. after game over, delete the game server instance and thread in lobby server, and tell database server to set is_playing to False.
-# 2. handle client disconnection during game.
+# next objective:
+# - add spectator mode
 
 from message_format_passer import MessageFormatPasser
 from protocols import Protocols, Words
@@ -33,6 +32,8 @@ class LobbyServer:
         self.invitation_lock = threading.Lock()
         self.game_servers: dict[str, GameServer] = {}  # {room_id: GameServer}
         self.game_server_threads: dict[str, threading.Thread] = {}  # {room_id: Thread}
+        self.game_server_win_recorded: dict[str, bool] = {}  # {room_id: bool}
+        self.game_server_lock = threading.Lock()
         
         #self.send_to_DB_queue = queue.Queue()
         #self.accept_thread = threading.Thread(target=self.accept_connections, daemon=True)
@@ -61,8 +62,6 @@ class LobbyServer:
                 self.handle_client(msgfmt_passer)
             elif connection_type == Words.ConnectionType.DATABASE_SERVER:
                 self.handle_database_server(msgfmt_passer)
-            elif connection_type == Words.ConnectionType.GAME_SERVER:
-                self.handle_game_server(msgfmt_passer)
             else:
                 print(f"Unknown connection type: {connection_type}")
         except Exception as e:
@@ -95,8 +94,73 @@ class LobbyServer:
         self.db_server_passer = None
         print("Database server disconnected.")
 
-    def handle_game_server(self, msgfmt_passer: MessageFormatPasser) -> None:
-        pass
+    def manage_game_servers(self) -> None:
+        while not self.shutdown_event.is_set():
+            cleanup_room_ids = []
+            with self.game_server_lock:
+                for room_id, game_server in self.game_servers.items():
+                    if game_server.game.winner is not None and not self.game_server_win_recorded.get(room_id, False):
+                        # Game over, record winner to database
+                        winner_username = ""
+                        loser_username = ""
+                        winner = game_server.game.winner
+                        if winner == "player1":
+                            winner_username = game_server.player1_username
+                            loser_username = game_server.player2_username
+                        elif winner == "player2":
+                            winner_username = game_server.player2_username
+                            loser_username = game_server.player1_username
+
+                        print(f"Game over in room {room_id}. Winner: {winner} ({winner_username})")
+
+                        # record win
+                        request_id = str(uuid.uuid4())
+                        with self.pending_db_response_lock:
+                            self.pending_db_response_dict[request_id] = (False, "", {})
+                        self.send_to_database(request_id, Words.Collection.USER, Words.Action.ADD_WIN, {Words.DataParamKey.USERNAME: winner_username})
+                        # Wait for response
+                        result, _ = self.receive_from_database(request_id)
+                        if result == Words.Result.SUCCESS:
+                            print(f"Recorded win for winner {winner_username} successfully.")
+                        else:
+                            print(f"Failed to record win for winner {winner_username}.")
+
+                        # record game played for loser
+                        request_id = str(uuid.uuid4())
+                        with self.pending_db_response_lock:
+                            self.pending_db_response_dict[request_id] = (False, "", {})
+                        self.send_to_database(request_id, Words.Collection.USER, Words.Action.ADD_GAME_PLAYED, {Words.DataParamKey.USERNAME: loser_username})
+                        # Wait for response
+                        result, _ = self.receive_from_database(request_id)
+                        if result == Words.Result.SUCCESS:
+                            print(f"Recorded game result for {loser_username} successfully.")
+                        else:
+                            print(f"Failed to record game result for {loser_username}.")
+
+                        # set is_playing to False for room
+                        request_id = str(uuid.uuid4())
+                        with self.pending_db_response_lock:
+                            self.pending_db_response_dict[request_id] = (False, "", {})
+                        self.send_to_database(request_id, Words.Collection.ROOM, Words.Action.UPDATE, {Words.DataParamKey.ROOM_ID: room_id, "is_playing": False})
+
+                        self.game_server_win_recorded[room_id] = True
+                    
+                    if not game_server.running.is_set():
+                        # Game server has stopped, clean up
+                        print(f"Cleaning up game server for room {room_id}.")
+                        if room_id in self.game_server_threads:
+                            self.game_server_threads[room_id].join()
+                            del self.game_server_threads[room_id]
+                        #del self.game_servers[room_id]
+                        cleanup_room_ids.append(room_id)
+                        if room_id in self.game_server_win_recorded:
+                            del self.game_server_win_recorded[room_id]
+                        print(f"Game server for room {room_id} cleaned up.")
+                for room_id in cleanup_room_ids:
+                    if room_id in self.game_servers:
+                        del self.game_servers[room_id]
+                    
+            time.sleep(1)
 
     def handle_client(self, msgfmt_passer: MessageFormatPasser) -> None:
         #self.user_infos[msgfmt_passer] = UserInfo()
@@ -536,12 +600,14 @@ class LobbyServer:
             started = False
             while True:
                 try:
-                    self.game_servers[current_room_id] = GameServer("0.0.0.0", 30000 + offset)
-                    #self.game_servers[current_room_id].start()
-                    self.game_server_threads[current_room_id] = threading.Thread(target=self.game_servers[current_room_id].start)
-                    self.game_server_threads[current_room_id].start()
-                    started = True
-                    self.game_servers[current_room_id].wait_until_started()
+                    with self.game_server_lock:
+                        self.game_servers[current_room_id] = GameServer("0.0.0.0", 30000 + offset)
+                        #self.game_servers[current_room_id].start()
+                        self.game_server_threads[current_room_id] = threading.Thread(target=self.game_servers[current_room_id].start)
+                        self.game_server_threads[current_room_id].start()
+                        started = True
+                        self.game_server_win_recorded[current_room_id] = False
+                        self.game_servers[current_room_id].wait_until_started()
                     time.sleep(0.5)  # Give some time for the server to start
                     break
                 except OSError as e:
@@ -568,7 +634,8 @@ class LobbyServer:
             for user in data.get(Words.DataParamKey.USERS, []):
                 for passer, username in self.mfpassers_username.items():
                     if username == user:
-                        passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.EVENT, "", Words.EventType.CONNECT_TO_GAME_SERVER, "", {Words.DataParamKey.PORT: self.game_servers[current_room_id].port})
+                        with self.game_server_lock:
+                            passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.EVENT, "", Words.EventType.CONNECT_TO_GAME_SERVER, "", {Words.DataParamKey.PORT: self.game_servers[current_room_id].port})
         elif result == Words.Result.NOT_FOUND:
             msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.START_GAME, "", Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "User not found."})
         else:
@@ -607,20 +674,25 @@ class LobbyServer:
     def start(self, host = "0.0.0.0", port = 21354) -> None:
         server_thread = threading.Thread(target=self.start_server, args=(host, port,))
         server_thread.start()
+        game_servers_manager_thread = threading.Thread(target=self.manage_game_servers)
+        game_servers_manager_thread.start()
         time.sleep(0.2)
         try:
             while True:
                 cmd = input("Enter 'stop' to stop the server: ")
                 if cmd == 'stop':
                     self.shutdown_event.set()
-                    for game_server in self.game_servers.values():
-                        game_server.stop()
+                    with self.game_server_lock:
+                        for game_server in self.game_servers.values():
+                            game_server.stop()
                     break
                 else:
                     print("invalid command.")
         except KeyboardInterrupt:
             self.shutdown_event.set()
-            for game_server in self.game_servers.values():
+            with self.game_server_lock:
+                for game_server in self.game_servers.values():
                     game_server.stop()
 
         server_thread.join()
+        game_servers_manager_thread.join()

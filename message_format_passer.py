@@ -1,5 +1,6 @@
 import socket
 import struct
+import threading
 from message_format import MessageFormat
 
 LENGTH_LIMIT = 65536
@@ -19,6 +20,8 @@ class MessageFormatPasser:
                 raise ValueError("Timeout must be positive")
         self.timeout = timeout
         self.sock.settimeout(timeout)
+        self.send_lock = threading.Lock()
+        self.receive_lock = threading.Lock()
 
     def connect(self, host: str = "127.0.0.1", port: int = 21354) -> None:
         self.sock.connect((host, port))
@@ -34,18 +37,21 @@ class MessageFormatPasser:
         # Prefix the JSON data with its length (4 bytes, network byte order)
         sending_data = struct.pack('!I', len(json_data)) + json_data.encode('utf-8')
         #print(f"Sending message: {sending_data}")
-        self.sock.send(sending_data)
+        with self.send_lock:
+            self.sock.send(sending_data)
 
     def read_exactly(self, num_bytes: int) -> bytes:
         """Read exactly num_bytes from self.sock."""
-        data = self.sock.recv(num_bytes)
-        self.sock.settimeout(None)
-        while len(data) < num_bytes:
-            chunk = self.sock.recv(num_bytes - len(data))
-            if not chunk:
-                raise ConnectionError("Connection closed")
-            data += chunk
-        self.sock.settimeout(self.timeout)
+        data = b""
+        with self.receive_lock:
+            data = self.sock.recv(num_bytes)
+            self.sock.settimeout(None)
+            while len(data) < num_bytes:
+                chunk = self.sock.recv(num_bytes - len(data))
+                if not chunk:
+                    raise ConnectionError("Connection closed")
+                data += chunk
+            self.sock.settimeout(self.timeout)
         return data
 
     def receive_args(self, msgfmt: MessageFormat) -> list:
