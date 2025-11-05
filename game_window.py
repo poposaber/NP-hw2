@@ -19,10 +19,12 @@ class GameWindow:
         self.small_font = pygame.freetype.SysFont("Consolas", 15)
         self.game_server_passer = game_server_passer
         self.game_started = True
+        self.game_playing = False
         self.game_over = False
         self.game_over_time_remaining = 5.0  # seconds
         self.time_stamp: float = time.time()
         self.player_id = player_id
+        #self.is_spectator = is_spectator
         self.running = True
 
         self.player1_info: PlayerInfo | None = None
@@ -62,7 +64,7 @@ class GameWindow:
         b = (idx * 151) % 200 + 30
         return (r, g, b)
     
-    def draw_board(self, board: str, topleft: tuple[int, int], is_my_board: bool = True):
+    def draw_board(self, board: str, topleft: tuple[int, int], is_my_board: bool | None = None):
         if board is None:
             return
         
@@ -74,17 +76,18 @@ class GameWindow:
         pad = self.CELL_PADDING
 
         border_color = (0, 0, 0)
-        if is_my_board:
-            border_color = (40, 40, 60) # a little blueish
-        else:
-            border_color = (60, 40, 40) # a little reddish
-        pygame.draw.rect(self.screen, border_color, (cx - 2, cy - 2, cols * cell + 4, rows * cell + 4)) # board border
-        
         empty_cell_color = (0, 0, 0)
-        if is_my_board:
-            empty_cell_color = (20, 20, 30) # dark blueish
+        if is_my_board is not None:
+            if is_my_board:
+                border_color = (40, 40, 60) # a little blueish
+                empty_cell_color = (20, 20, 30) # dark blueish
+            else:
+                border_color = (60, 40, 40) # a little reddish
+                empty_cell_color = (30, 20, 20) # dark reddish
         else:
-            empty_cell_color = (30, 20, 20) # dark reddish
+            border_color = (50, 50, 50) # neutral gray
+            empty_cell_color = (20, 20, 20) # neutral dark
+        pygame.draw.rect(self.screen, border_color, (cx - 2, cy - 2, cols * cell + 4, rows * cell + 4)) # board border
 
         for r in range(rows):
             for c in range(cols):
@@ -147,12 +150,16 @@ class GameWindow:
                             pygame.draw.rect(self.screen, (200, 200, 200), rect) # next piece color can be fixed
                             pygame.draw.rect(self.screen, (15, 15, 15), rect, 1)
 
-    def draw_health_bar(self, x, y, health, max_health=40, width=160, height=14, is_my_health: bool = True):
+    def draw_health_bar(self, x, y, health, max_health=40, width=160, height=14, is_my_health: bool | None = None):
         if health is None:
             health = 0
         ratio = max(0.0, min(1.0, health / max_health))
         pygame.draw.rect(self.screen, (60, 60, 60), (x, y, width, height)) # dark background
-        health_color = (50, 180, 50) if is_my_health else (180, 50, 50)
+        health_color = (0, 0, 0)
+        if is_my_health is not None:
+            health_color = (50, 180, 50) if is_my_health else (180, 50, 50)
+        else:
+            health_color = (180, 180, 50) # neutral yellowish
         pygame.draw.rect(self.screen, health_color, (x + 2, y + 2, int((width - 4) * ratio), height - 4)) # health color
         pygame.draw.rect(self.screen, (180, 180, 180), (x, y, width, height), 1) # border
         # Draw health text
@@ -187,6 +194,8 @@ class GameWindow:
         elif self.player_id == "player2":
             p1_text += " (Opponent)"
             p2_text += " (You)"
+        else:
+            self.draw_text("Spectator Mode", (350, 570), color=(200, 200, 50))
         self.draw_text(f"Player 1: {p1_text}", (20, 8))
         self.draw_text(f"Player 2: {p2_text}", (420, 8))
 
@@ -197,6 +206,9 @@ class GameWindow:
                 update = self.game_update_temp.copy()
 
         if update:
+            if not self.game_playing:
+                self.game_playing = True
+
             state1 = update.get('state1')
             state2 = update.get('state2')
             data = update.get('data', {})
@@ -206,7 +218,7 @@ class GameWindow:
 
             if state1:
                 p1_board = state1.get('board', "")
-                self.draw_board(p1_board, board_left, is_my_board=(self.player_id == "player1"))
+                self.draw_board(p1_board, board_left, is_my_board=None if self.player_id == 'spectator' else (self.player_id == "player1"))
                 now_piece1 = state1.get('now_piece')
                 now_piece1_color = state1.get('color', 1)
                 now_piece1_pos = state1.get('position')
@@ -218,18 +230,20 @@ class GameWindow:
                 p1_score = state1.get('score', 0)
                 self.draw_score_bar(20, 50 + board_rows * self.CELL_SIZE + 75, p1_score, self.goal_score or 300)
                 p1_health = state1.get('health', 100)
-                self.draw_health_bar(20, 50 + board_rows * self.CELL_SIZE + 36, p1_health, is_my_health=(self.player_id == "player1"))
+                self.draw_health_bar(20, 50 + board_rows * self.CELL_SIZE + 36, p1_health, is_my_health=None if self.player_id == 'spectator' else (self.player_id == "player1"))
                 
                 p1_revive_time = state1.get('revive_time', 0)
                 if p1_revive_time > 0:
                     text_color = (255, 100, 100) if self.player_id == "player1" else (200, 200, 200)
+                    if self.player_id == 'spectator':
+                        text_color = (200, 200, 50)
                     self.draw_text(f"Reviving in: {p1_revive_time:.1f}s", (20, 50 + board_rows * self.CELL_SIZE // 2), color=text_color) # center of board
 
                 
 
             if state2:
                 p2_board = state2.get('board', "")
-                self.draw_board(p2_board, board_right, is_my_board=(self.player_id == "player2"))
+                self.draw_board(p2_board, board_right, is_my_board=None if self.player_id == 'spectator' else (self.player_id == "player2"))
                 now_piece2 = state2.get('now_piece')
                 now_piece2_color = state2.get('color', 1)
                 now_piece2_pos = state2.get('position')
@@ -240,11 +254,13 @@ class GameWindow:
                 p2_score = state2.get('score', 0)
                 self.draw_score_bar(420, 50 + board_rows * self.CELL_SIZE + 75, p2_score, self.goal_score or 300)
                 p2_health = state2.get('health', 100)
-                self.draw_health_bar(420, 50 + board_rows * self.CELL_SIZE + 36, p2_health, is_my_health=(self.player_id == "player2"))
+                self.draw_health_bar(420, 50 + board_rows * self.CELL_SIZE + 36, p2_health, is_my_health=None if self.player_id == 'spectator' else (self.player_id == "player2"))
                 
                 p2_revive_time = state2.get('revive_time', 0)
                 if p2_revive_time > 0:
                     text_color = (255, 100, 100) if self.player_id == "player2" else (200, 200, 200)
+                    if self.player_id == 'spectator':
+                        text_color = (200, 200, 50)
                     self.draw_text(f"Reviving in: {p2_revive_time:.1f}s", (420, 50 + board_rows * self.CELL_SIZE // 2), color=text_color) # center of board
 
             
@@ -254,7 +270,7 @@ class GameWindow:
             if self.game_over:
                 self.game_over_time_remaining -= delta_time
                 if 'winner' in data and 'message' in data:
-                    self.draw_text(f"Game Over! Winner: {data.get('winner')} \n {data.get('message')}", (150, 150), color=(255, 255, 255))
+                    self.draw_text(f"Game Over! Winner: {data.get('winner')} ({data.get('message')})", (150, 150), color=(255, 255, 255))
                 elif 'winner' in data:
                     self.draw_text(f"Game Over! Winner: {data.get('winner')}", (250, 250), color=(255, 255, 255))
                 elif 'message' in data:
@@ -276,7 +292,7 @@ class GameWindow:
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
                         self.running = False
-                    if self.game_started and not self.game_over:
+                    if self.game_started and not self.game_over and self.game_playing and self.player_id in ["player1", "player2"]:
                         if event.type == pygame.KEYDOWN:
                             if self.game_server_passer and self.player_id:
                                 key_action = None

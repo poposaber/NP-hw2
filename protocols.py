@@ -161,6 +161,7 @@ class Words:
         DELETE = "delete"
         QUERY = "query"
         ADD_USER = "add_user"
+        ADD_SPECTATOR = "add_spectator"
         REMOVE_USER = "remove_user"
         ADD_WIN = "add_win"
         ADD_GAME_PLAYED = "add_game_played"
@@ -168,12 +169,14 @@ class Words:
         EXIT = "exit"
         CHECK_USERNAME = "check_username" # Check if a username is available to register
         CHECK_JOINABLE_ROOMS = "check_joinable_rooms" # Get a list of public joinable rooms
+        CHECK_SPECTATABLE_ROOMS = "check_spectatable_rooms" # Get a list of public spectatable rooms
         CHECK_ONLINE_USERS = "check_online_users" # Get a list of online users
         REGISTER = "register"
         LOGIN = "login"
         LOGOUT = "logout"
         CREATE_ROOM = "create_room"
         JOIN_ROOM = "join_room"
+        SPECTATE_ROOM = "spectate_room"
         LEAVE_ROOM = "leave_room"
         DISBAND_ROOM = "disband_room"
         INVITE_USER = "invite_user"
@@ -214,6 +217,7 @@ class Words:
         IS_PLAYING = "is_playing"
         HOST = "host"
         PORT = "port"
+        SPECTATORS = "spectators"
     class Reason:
         INVALID_CREDENTIALS = "invalid_credentials"
         ROOM_FULL = "room_full"
@@ -230,6 +234,7 @@ class Words:
         ROOM_DISBANDED = "room_disbanded"
         INVITATION_RECEIVED = "invitation_received"
         CONNECT_TO_GAME_SERVER = "connect_to_game_server"
+        CONNECT_TO_GAME_SERVER_AS_SPECTATOR = "connect_to_game_server_as_spectator"
         SERVER_SHUTDOWN = "server_shutdown"
     class ConnectionType:
         CLIENT = "client"

@@ -65,8 +65,9 @@ class Tetris:
             self.now_piece.rotate()
         else:
             # Try wall kicks
+            temp_pos = temp_piece.position
             for shift in [-1, 1, -2, 2]:
-                temp_piece.position = (temp_piece.position[0], temp_piece.position[1] + shift)
+                temp_piece.position = (temp_pos[0], temp_pos[1] + shift)
                 if not self.check_collide(temp_piece):
                     self.now_piece.position = (self.now_piece.position[0], self.now_piece.position[1] + shift)
                     self.now_piece.rotate()

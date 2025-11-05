@@ -36,9 +36,9 @@ class MessageFormatPasser:
         json_data = msgfmt.to_json(*args)
         # Prefix the JSON data with its length (4 bytes, network byte order)
         sending_data = struct.pack('!I', len(json_data)) + json_data.encode('utf-8')
-        #print(f"Sending message: {sending_data}")
+        print(f"Sending message: {sending_data}")
         with self.send_lock:
-            self.sock.send(sending_data)
+            self.sock.sendall(sending_data)
 
     def read_exactly(self, num_bytes: int) -> bytes:
         """Read exactly num_bytes from self.sock."""
@@ -70,7 +70,7 @@ class MessageFormatPasser:
         # Now read the actual message data
         self.sock.settimeout(None)
         json_data = self.read_exactly(message_length).decode("utf-8")
-        #print(f"Received message: {json_data}")
+        print(f"Received message: {json_data}")
         return msgfmt.to_arg_list(json_data)
     
     def close(self) -> None:

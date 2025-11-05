@@ -4,6 +4,8 @@ from message_format_passer import MessageFormatPasser
 from protocols import Protocols, Words
 from game import Game
 from queue import Queue
+from queue import Full
+from queue import Empty
 import socket
 import threading
 import time
@@ -19,8 +21,13 @@ class GameServer:
         self.game_thread: threading.Thread | None = None
         self.handle_player1_thread: threading.Thread | None = None
         self.handle_player2_thread: threading.Thread | None = None
+        self.handle_player1_out_thread: threading.Thread | None = None
+        self.handle_player2_out_thread: threading.Thread | None = None
         self.player1_passer: MessageFormatPasser | None = None
         self.player2_passer: MessageFormatPasser | None = None
+        self.player1_queue: Queue = Queue(maxsize=100)
+        self.player2_queue: Queue = Queue(maxsize=100)
+        self.spectator_ptq_list: list[tuple[MessageFormatPasser, threading.Thread, Queue]] = []
         self.player1_username: str | None = None
         self.player2_username: str | None = None
         self.room_id: str | None = None
@@ -92,12 +99,68 @@ class GameServer:
 
                         self.handle_player2_thread = threading.Thread(target=self.handle_player, args=(self.player2_passer, "player2"))
                         self.handle_player2_thread.start()
+
+                        self.handle_player1_out_thread = threading.Thread(target=self.handle_player_out, args=(self.player1_passer, "player1", self.player1_queue))
+                        self.handle_player1_out_thread.start()
+
+                        self.handle_player2_out_thread = threading.Thread(target=self.handle_player_out, args=(self.player2_passer, "player2", self.player2_queue))
+                        self.handle_player2_out_thread.start()
+                elif connection_type == 'spectator':
+                    with self.lock:
+                        spectator_queue = Queue(maxsize=100)
+                        thr = threading.Thread(target=self.handle_spectator, args=(passer, spectator_queue))
+                        thr.start()
+                        self.spectator_ptq_list.append((passer, thr, spectator_queue))
+                    passer.send_args(Protocols.GameServerToPlayer.CONNECT_RESPONSE, Words.Result.SUCCESS, 'spectator', self.seed, "random-uniform", {"drop_speed": 1.0})
+                    print(f"Spectator connected: {addr}")
+                else:
+                    print("Unknown connection type, rejecting connection")
+                    passer.send_args(Protocols.GameServerToPlayer.CONNECT_RESPONSE, Words.Result.FAILURE, {'message': 'Unknown connection type'})
+                    client_socket.close()
+                
             except TimeoutError:
                 continue
             except Exception as e:
                 print(f"Error accepting connections: {e}")
         print("Game server stopping acceptance of new connections.")
         self.stop()
+
+    def handle_spectator(self, passer: MessageFormatPasser, spectator_queue: Queue) -> None:
+        try:
+            while not (self.player1_ready.is_set() and self.player2_ready.is_set()):
+                if not self.running.is_set():
+                    passer.close()
+                    return
+                time.sleep(0.1)
+            passer.send_args(Protocols.GameServerToPlayer.GAME_START_RESULT, 
+                                    Words.Result.SUCCESS,
+                                    "Game started successfully",
+                                    self.player1_username,
+                                    self.player2_username,
+                                    self.game.player1.health,
+                                    self.game.tetris1.now_piece.type_name if self.game.tetris1.now_piece else None,
+                                    [piece.type_name for piece in self.game.tetris1.next_piece_list],
+                                    self.game.goal_score)
+            while self.running.is_set():
+                try:
+                    state1, state2, data = spectator_queue.get(timeout=1.0)
+                    passer.send_args(Protocols.GameServerToPlayer.GAME_UPDATE, state1, state2, data)
+                except Empty:
+                    continue
+                except TimeoutError:
+                    continue
+                except ConnectionResetError:
+                    print("Spectator disconnected unexpectedly")
+                    with self.lock:
+                        self.spectator_ptq_list.remove((passer, threading.current_thread(), spectator_queue))
+                    passer.close()
+                    return
+                except Exception as e:
+                    print(f"Error handling spectator queue: {e}")
+
+        except Exception as e:
+            print(f"Error handling spectator: {e}")
+        print("Exiting handler for spectator")
 
 
     def handle_player(self, passer: MessageFormatPasser, player_id: str) -> None:
@@ -144,6 +207,33 @@ class GameServer:
                     self.player2_passer = None
             self.action_queue.put((player_id, Words.GameAction.DISCONNECT, {}))
         print(f"Exiting handler for {player_id}")
+
+    def handle_player_out(self, passer: MessageFormatPasser, player_id: str, player_queue: Queue) -> None:
+        try:
+            while self.running.is_set():
+                try:
+                    state1, state2, data = player_queue.get(timeout=1.0)
+                    passer.send_args(Protocols.GameServerToPlayer.GAME_UPDATE, state1, state2, data)
+                except Empty:
+                    continue
+                except TimeoutError:
+                    continue
+                except ConnectionResetError:
+                    print(f"{player_id} disconnected unexpectedly")
+                    with self.lock:
+                        if player_id == "player1":
+                            self.player1_passer = None
+                        else:
+                            self.player2_passer = None
+                    self.action_queue.put((player_id, Words.GameAction.DISCONNECT, {}))
+                    passer.close()
+                    return
+                except Exception as e:
+                    print(f"Error handling {player_id} output queue: {e}")
+
+        except Exception as e:
+            print(f"Error in handle_player_out for {player_id}: {e}")
+        print(f"Exiting output handler for {player_id}")
 
     def handle_game_session(self) -> None:
         now = time.time()
@@ -202,6 +292,16 @@ class GameServer:
                                           self.game.tetris2.now_piece.type_name if self.game.tetris2.now_piece else None,
                                           [piece.type_name for piece in self.game.tetris2.next_piece_list],
                                           self.game.goal_score)
+            # for spectator in self.spectator_passers:
+            #     spectator.send_args(Protocols.GameServerToPlayer.GAME_START_RESULT, 
+            #                         Words.Result.SUCCESS,
+            #                         "Game started successfully",
+            #                         self.player1_username,
+            #                         self.player2_username,
+            #                         self.game.player1.health,
+            #                         self.game.tetris1.now_piece.type_name if self.game.tetris1.now_piece else None,
+            #                         [piece.type_name for piece in self.game.tetris1.next_piece_list],
+            #                         self.game.goal_score)
             
             print("Both players are ready. Starting the game loop.")
 
@@ -258,9 +358,42 @@ class GameServer:
                     
                 with self.lock:
                     if self.player1_passer is not None:
-                        self.player1_passer.send_args(Protocols.GameServerToPlayer.GAME_UPDATE, state1, state2, data)
+                        #self.player1_passer.send_args(Protocols.GameServerToPlayer.GAME_UPDATE, state1, state2, data)
+                        try:
+                            self.player1_queue.put_nowait((state1, state2, data))
+                        except Full:
+                            try:
+                                self.player1_queue.get_nowait()  # Remove oldest
+                                self.player1_queue.put_nowait((state1, state2, data))
+                            except Empty:
+                                pass
                     if self.player2_passer is not None:
-                        self.player2_passer.send_args(Protocols.GameServerToPlayer.GAME_UPDATE, state1, state2, data) # send same state to player2 for simplicity
+                        try:
+                            self.player2_queue.put_nowait((state1, state2, data))
+                        except Full:
+                            try:
+                                self.player2_queue.get_nowait()  # Remove oldest
+                                self.player2_queue.put_nowait((state1, state2, data))
+                            except Empty:
+                                pass
+                    for _, _, spectator_queue in self.spectator_ptq_list:
+                        try:
+                            spectator_queue.put_nowait((state1, state2, data))
+                        except Full:
+                            try:
+                                spectator_queue.get_nowait()  # Remove oldest
+                                spectator_queue.put_nowait((state1, state2, data))
+                            except Empty:
+                                pass
+                            print("Spectator queue is full")
+                    # for spectator in self.spectator_passers:
+                    #     try:
+                    #         spectator.send_args(Protocols.GameServerToPlayer.GAME_UPDATE, state1, state2, data)
+                    #     except ConnectionError:
+                    #         print("A spectator disconnected.")
+                    #         self.spectator_passers.remove(spectator)
+                    #     except Exception as e:
+                    #         print(f"Error sending update to spectator: {e}")
                 if self.game.gameover:
                     print(f"Game over! Winner: {self.game.winner}")
                     time.sleep(5.0) # wait before ending the session

@@ -41,14 +41,19 @@ class Client:
             if self.info.current_room_id is None:
                 print("createroom: create a game room")
                 print("joinroom: join a public game room")
+                print("spectate: spectate a public game room") # join as spectator
                 if self.info.users_inviting_me:
                     print("accept: accept an invitation to join a game room")
             else:
                 print("invite: invite an online player to your current game room")
                 print("leaveroom: leave the current game room")
-                print("startgame: start the game (room owner only)")
+                if self.info.is_room_owner:
+                    print("startgame: start the game (room owner only)")
                 if self.game_connected_event.is_set():
-                    print("play: play the game")
+                    if self.info.is_spectating:
+                        print("view: spectate the game")
+                    else:
+                        print("play: play the game")
             
             print("exit: exit the lobby server and close.\n\n")
             print(f"{self.info.name}, enter command: >>>>>>>>>> ", end="")
@@ -176,6 +181,7 @@ class Client:
                 print(f"Room created successfully. Room ID: {room_id}")
                 self.info.current_room_id = room_id
                 self.info.is_room_owner = True
+                self.info.is_spectating = False
             else:
                 message = data.get(Words.DataParamKey.MESSAGE, "Create room failed.")
                 print(message)
@@ -200,6 +206,7 @@ class Client:
                 print("Left room successfully.")
                 self.info.current_room_id = None
                 self.info.is_room_owner = False
+                self.info.is_spectating = False
             else:
                 message = data.get(Words.DataParamKey.MESSAGE, "Leave room failed.")
                 print(message)
@@ -246,6 +253,64 @@ class Client:
                         print(f"Joined room {room_id} successfully.")
                         self.info.current_room_id = room_id
                         self.info.is_room_owner = False
+                        self.info.is_spectating = False
+                        self.info.users_inviting_me.clear()
+                        break
+                    else:
+                        message = data.get(Words.DataParamKey.MESSAGE, "Join room failed.")
+                        print(message)
+                        self.info.current_room_id = None
+                        self.info.is_room_owner = False
+
+            else:
+                message = data.get(Words.DataParamKey.MESSAGE, "Join room failed.")
+                print(message)
+        except KeyboardInterrupt:
+            print("\nJoin room cancelled.")
+            return
+        except Exception as e:
+            print(f"Error during join room: {e}")
+
+    def join_room_as_spectator(self):
+        try:
+            self.send_to_lobby(Words.Command.CHECK_SPECTATABLE_ROOMS, {})
+            response = self.get_response(timeout=5.0)
+            if response is None:
+                print("No response from server. Join room failed.")
+                return
+            responding_command, result, data = response # expect data = {room_id: {room_info_dict}, ...}
+            if responding_command != Words.Command.CHECK_SPECTATABLE_ROOMS:
+                print("Unexpected response from server. Join room failed.")
+                return
+            if result == Words.Result.SUCCESS:
+                spectatable_rooms = data
+                if not spectatable_rooms:
+                    print("No public spectatable rooms available.")
+                    return
+                print("Available public spectatable rooms:")
+                print("Room ID\tOwner")
+                for room_id, room_info in spectatable_rooms.items():
+                    owner = room_info.get(Words.DataParamKey.OWNER, "Unknown")
+                    print(f"{room_id}\t{owner}")
+                while True:
+                    room_id = input("Enter the room ID to spectate (or 'Ctrl+C' to cancel): ")
+                    if room_id not in spectatable_rooms.keys():
+                        print("Invalid room ID. Please try again.")
+                        continue
+                    self.send_to_lobby(Words.Command.SPECTATE_ROOM, {Words.DataParamKey.ROOM_ID: room_id})
+                    response = self.get_response(timeout=5.0)
+                    if response is None:
+                        print("No response from server. Join room failed.")
+                        return
+                    responding_command, result, data = response
+                    if responding_command != Words.Command.SPECTATE_ROOM:
+                        print("Unexpected response from server. Join room failed.")
+                        return
+                    if result == Words.Result.SUCCESS:
+                        print(f"Joined room {room_id} as a spectator successfully.")
+                        self.info.current_room_id = room_id
+                        self.info.is_room_owner = False
+                        self.info.is_spectating = True
                         self.info.users_inviting_me.clear()
                         break
                     else:
@@ -382,24 +447,27 @@ class Client:
     #         except Exception:
     #             pass
 
-    def start_game(self):
+    def start_game(self) -> bool:
         try:
             self.send_to_lobby(Words.Command.START_GAME, {})
             response = self.get_response(timeout=5.0)
             if response is None:
                 print("No response from server. Start game failed.")
-                return
+                return False
             responding_command, result, data = response
             if responding_command != Words.Command.START_GAME:
                 print("Unexpected response from server. Start game failed.")
-                return
+                return False
             if result == Words.Result.SUCCESS:
                 print("Game started successfully.")
+                return True
             else:
                 message = data.get(Words.DataParamKey.MESSAGE, "Start game failed.")
                 print(message)
+                return False
         except Exception as e:
             print(f"Error during start game: {e}")
+            return False
 
     def play_game(self):
         if self.game_msgfmt_passer is None or not self.game_connected_event.is_set():
@@ -416,7 +484,24 @@ class Client:
         self.game_connected_event.clear()
         self.listen_game_thread.join()
         self.game_msgfmt_passer.close()
-        self.game_msgfmt_passer = MessageFormatPasser(timeout=1.0)
+        #self.game_msgfmt_passer = MessageFormatPasser()
+
+    def view_game(self):
+        if self.game_msgfmt_passer is None or not self.game_connected_event.is_set():
+            print("Game message passer is not ready or not connected to game server.")
+            return
+        
+        print("viewing game...")
+        self.game_msgfmt_passer.send_args(Protocols.PlayerToGameServer.GAME_ACTION, Words.GameAction.READY, {})
+        self.game_window = GameWindow(game_server_passer=self.game_msgfmt_passer, player_id=self.player_id) # in spectator mode, self.player_id == 'spectator'
+        self.listen_game_thread = threading.Thread(target=self.listen_for_game_messages)
+        self.listen_game_thread.start()
+        time.sleep(0.2)  # give some time for the thread to start
+        self.game_window.run()
+        self.game_connected_event.clear()
+        self.listen_game_thread.join()
+        self.game_msgfmt_passer.close()
+        #self.game_msgfmt_passer = MessageFormatPasser()
 
     def listen_for_game_messages(self):
         if self.game_msgfmt_passer is None or not self.game_connected_event.is_set():
@@ -470,6 +555,9 @@ class Client:
                         if not self.info.name:
                             print("You are not logged in.")
                             continue
+                        if self.game_connected_event.is_set():
+                            print("You are currently in a game. Cannot logout now.")
+                            continue
                         self.logout()
                     case "createroom":
                         if not self.info.name:
@@ -485,6 +573,9 @@ class Client:
                             continue
                         if self.info.current_room_id is None:
                             print("You are not in any room.")
+                            continue
+                        if self.game_connected_event.is_set():
+                            print("You are currently in a game. Cannot leave room now.")
                             continue
                         self.leave_room()
                     case "joinroom":
@@ -502,6 +593,9 @@ class Client:
                         if self.info.current_room_id is None:
                             print("You are not in any room.")
                             continue
+                        if self.game_connected_event.is_set():
+                            print("You are currently in a game. Cannot invite players now.")
+                            continue
                         self.invite_player()
                     case "accept":
                         if not self.info.name:
@@ -509,6 +603,9 @@ class Client:
                             continue
                         if not self.info.users_inviting_me:
                             print("You have no invitations to accept.")
+                            continue
+                        if self.game_connected_event.is_set():
+                            print("You are currently in a game. Cannot accept invitations now.")
                             continue
                         self.accept_invitation()
                     case "startgame":
@@ -521,12 +618,13 @@ class Client:
                         if not self.info.is_room_owner:
                             print("Only the room owner can start the game.")
                             continue
-                        self.start_game()
-                        ok = self.game_connected_event.wait(timeout=10.0)
-                        if ok:
-                            self.play_game()
-                        else:
-                            print("Failed to connect to the game server.")
+                        
+                        if self.start_game():
+                            ok = self.game_connected_event.wait(timeout=10.0)
+                            if ok:
+                                self.play_game()
+                            else:
+                                print("Failed to connect to the game server.")
                     case "play":
                         if not self.info.name:
                             print("You are not logged in.")
@@ -537,7 +635,32 @@ class Client:
                         if not self.game_connected_event.is_set():
                             print("You are not connected to the game server.")
                             continue
+                        if self.info.is_spectating:
+                            print("You are spectating the game. Cannot play.")
+                            continue
                         self.play_game()
+                    case 'spectate':
+                        if not self.info.name:
+                            print("You are not logged in.")
+                            continue
+                        if self.info.current_room_id is not None:
+                            print("You are already in a room. Cannot spectate another room.")
+                            continue
+                        self.join_room_as_spectator()
+                    case "view":
+                        if not self.info.name:
+                            print("You are not logged in.")
+                            continue
+                        if self.info.current_room_id is None:
+                            print("You are not in any room.")
+                            continue
+                        if not self.game_connected_event.is_set():
+                            print("You are not connected to the game server.")
+                            continue
+                        if not self.info.is_spectating:
+                            print("You are not spectating the game.")
+                            continue
+                        self.view_game()
                     case "exit":
                         print("Exiting client.")
                         self.close()
@@ -634,6 +757,11 @@ class Client:
                 if not self.info.is_room_owner and data.get(Words.DataParamKey.NOW_ROOM_INFO, {}).get("owner") == self.info.name:
                     print("You are now the room owner.")
                     self.info.is_room_owner = True
+                if data.get(Words.DataParamKey.NOW_ROOM_INFO, {}).get("owner") == None: # there is no users left in the room
+                    print("The room is now empty. You are no longer in the room.")
+                    self.info.current_room_id = None
+                    self.info.is_room_owner = False
+                    self.info.is_spectating = False
             case Words.EventType.CONNECT_TO_GAME_SERVER:
                 host = data.get(Words.DataParamKey.HOST, self.host)
                 port = data.get(Words.DataParamKey.PORT)
@@ -653,9 +781,7 @@ class Client:
                         pass
 
                     # create fresh passer and connect
-                    #time.sleep(3 + random.randint(0, 4))  # wait a bit to ensure game server is ready
-                    #print(f"Time sleep done. Connecting to game server at {host}:{port}...")
-                    #print(f"host type: {type(host)}, port type: {type(port)}")
+
                     self.game_msgfmt_passer = MessageFormatPasser()
                     self.game_msgfmt_passer.connect(host, int(port))
 
@@ -663,6 +789,65 @@ class Client:
 
                     # send client->server connect handshake (game server expects this)
                     self.game_msgfmt_passer.send_args(Protocols.ClientToGameServer.CONNECT, self.info.name, self.info.current_room_id, 'player')
+
+
+                    # receive single CONNECT_RESPONSE and unpack it once
+                    res = self.game_msgfmt_passer.receive_args(Protocols.GameServerToPlayer.CONNECT_RESPONSE)
+                    if not res:
+                        print("No response from game server. Connection failed.")
+                        try:
+                            self.game_msgfmt_passer.close()
+                        except Exception:
+                            pass
+                        return
+
+                    result, role, seed, random_mode, gravity_plan = res
+                    if result != Words.Result.SUCCESS:
+                        print("Failed to connect to game server.")
+                        try:
+                            self.game_msgfmt_passer.close()
+                        except Exception:
+                            pass
+                        return
+
+                    print(f"Connected to game server as {role} with seed {seed} and random mode {random_mode}.")
+                    self.player_id = role
+                    self.game_connected_event.set()
+                except Exception as e:
+                    print(f"Error connecting to game server: {e}")
+                    try:
+                        if self.game_msgfmt_passer is not None:
+                            self.game_msgfmt_passer.close()
+                    except Exception:
+                        pass
+            case Words.EventType.CONNECT_TO_GAME_SERVER_AS_SPECTATOR:
+                host = data.get(Words.DataParamKey.HOST, self.host)
+                port = data.get(Words.DataParamKey.PORT)
+                if port is None:
+                    print("CONNECT_TO_GAME_SERVER_AS_SPECTATOR event missing port. Ignoring.")
+                    return
+                print(f"Spectating game! Connect to game server at {host}:{port}.")
+                if self.game_connected_event.is_set():
+                    print("Already connected to a game server; ignoring duplicate connect event.")
+                    return
+                try:
+                    # close any previous game passer (best-effort)
+                    try:
+                        if self.game_msgfmt_passer is not None:
+                            self.game_msgfmt_passer.close()
+                    except Exception:
+                        pass
+
+                    # create fresh passer and connect
+
+                    self.game_msgfmt_passer = MessageFormatPasser()
+                    self.game_msgfmt_passer.connect(host, int(port))
+
+                    print("Connected to game server. Sending connect handshake...")
+
+                    # send client->server connect handshake (game server expects this)
+                    self.game_msgfmt_passer.send_args(Protocols.ClientToGameServer.CONNECT, self.info.name, self.info.current_room_id, 'spectator')
+
 
                     # receive single CONNECT_RESPONSE and unpack it once
                     res = self.game_msgfmt_passer.receive_args(Protocols.GameServerToPlayer.CONNECT_RESPONSE)

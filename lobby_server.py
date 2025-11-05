@@ -206,6 +206,8 @@ class LobbyServer:
                 self.help_check_username(params, msgfmt_passer)
             case Words.Command.CHECK_JOINABLE_ROOMS:
                 self.help_check_joinable_rooms(params, msgfmt_passer)
+            case Words.Command.CHECK_SPECTATABLE_ROOMS:
+                self.help_check_spectatable_rooms(params, msgfmt_passer)
             case Words.Command.CHECK_ONLINE_USERS:
                 self.help_check_online_users(params, msgfmt_passer)
             case Words.Command.REGISTER:
@@ -218,6 +220,8 @@ class LobbyServer:
                 self.help_leave_room(params, msgfmt_passer)
             case Words.Command.JOIN_ROOM:
                 self.help_join_room(params, msgfmt_passer)
+            case Words.Command.SPECTATE_ROOM:
+                self.help_spectate_room(params, msgfmt_passer)
             case Words.Command.INVITE_USER:
                 self.help_invite_user(params, msgfmt_passer)
             case Words.Command.ACCEPT_INVITE:
@@ -252,9 +256,14 @@ class LobbyServer:
                     if result == Words.Result.SUCCESS:
                         now_room_info = data.get(Words.DataParamKey.NOW_ROOM_INFO, {})
                         for user in now_room_info.get("users", []):
-                            for passer, username in self.mfpassers_username.items():
-                                if username == user and passer != msgfmt_passer:
+                            for passer, usname in self.mfpassers_username.items():
+                                if usname == user and passer != msgfmt_passer:
                                     passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.EVENT, "", Words.EventType.USER_LEFT, "", {Words.DataParamKey.USERNAME: self.mfpassers_username[msgfmt_passer], Words.DataParamKey.NOW_ROOM_INFO: now_room_info})
+                    # also notify spectators
+                    for spectator in now_room_info.get("spectators", []):
+                        for passer, usname in self.mfpassers_username.items():
+                            if usname == spectator and passer != msgfmt_passer:
+                                passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.EVENT, "", Words.EventType.USER_LEFT, "", {Words.DataParamKey.USERNAME: self.mfpassers_username[msgfmt_passer], Words.DataParamKey.NOW_ROOM_INFO: now_room_info})
                             
 
             request_id = str(uuid.uuid4())
@@ -445,6 +454,10 @@ class LobbyServer:
                 for passer, username in self.mfpassers_username.items():
                     if username == user and passer != msgfmt_passer:
                         passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.EVENT, "", Words.EventType.USER_LEFT, "", {Words.DataParamKey.USERNAME: self.mfpassers_username[msgfmt_passer], Words.DataParamKey.NOW_ROOM_INFO: now_room_info})
+            for spectator in now_room_info.get("spectators", []):
+                for passer, username in self.mfpassers_username.items():
+                    if username == spectator and passer != msgfmt_passer:
+                        passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.EVENT, "", Words.EventType.USER_LEFT, "", {Words.DataParamKey.USERNAME: self.mfpassers_username[msgfmt_passer], Words.DataParamKey.NOW_ROOM_INFO: now_room_info})
         elif result == Words.Result.FAILURE:
             msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.LEAVE_ROOM, "", Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "Failed to leave room."})
         else:
@@ -532,6 +545,24 @@ class LobbyServer:
         else:
             msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.CHECK_JOINABLE_ROOMS, "", Words.Result.ERROR, {Words.DataParamKey.MESSAGE: "Database error."})
 
+    def help_check_spectatable_rooms(self, params: dict, msgfmt_passer: MessageFormatPasser) -> None:
+        if self.db_server_passer is None:
+            msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.CHECK_SPECTATABLE_ROOMS, "", Words.Result.ERROR, {Words.DataParamKey.MESSAGE: "No database server connected."})
+            return
+        request_id = str(uuid.uuid4())
+        with self.pending_db_response_lock:
+            self.pending_db_response_dict[request_id] = (False, "", {})
+        self.send_to_database(request_id, Words.Collection.ROOM, Words.Action.QUERY, {})
+        # Wait for response
+        result, data = self.receive_from_database(request_id)
+        if result == Words.Result.FOUND:
+            spectatable_rooms = {room_id: room_info for room_id, room_info in data.items() if room_info.get("settings", {}).get(Words.DataParamKey.PRIVACY) == "public" and room_info.get("is_playing") == False}
+            msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.CHECK_SPECTATABLE_ROOMS, "", Words.Result.SUCCESS, spectatable_rooms)
+        elif result == Words.Result.NOT_FOUND:
+            msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.CHECK_SPECTATABLE_ROOMS, "", Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "Failed to retrieve spectatable rooms."})
+        else:
+            msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.CHECK_SPECTATABLE_ROOMS, "", Words.Result.ERROR, {Words.DataParamKey.MESSAGE: "Database error."})
+
     def help_join_room(self, params: dict, msgfmt_passer: MessageFormatPasser) -> None:
         if self.db_server_passer is None:
             msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.JOIN_ROOM, "", Words.Result.ERROR, {Words.DataParamKey.MESSAGE: "No database server connected."})
@@ -556,11 +587,48 @@ class LobbyServer:
                 for passer, username in self.mfpassers_username.items():
                     if username == user and passer != msgfmt_passer:
                         passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.EVENT, "", Words.EventType.USER_JOINED, "", {Words.DataParamKey.USERNAME: self.mfpassers_username[msgfmt_passer], Words.DataParamKey.NOW_ROOM_INFO: now_room_info})
+            for spectator in now_room_info.get("spectators", []):
+                for passer, username in self.mfpassers_username.items():
+                    if username == spectator and passer != msgfmt_passer:
+                        passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.EVENT, "", Words.EventType.USER_JOINED, "", {Words.DataParamKey.USERNAME: self.mfpassers_username[msgfmt_passer], Words.DataParamKey.NOW_ROOM_INFO: now_room_info})
         elif result == Words.Result.FAILURE:
             msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.JOIN_ROOM, "", Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "Failed to join room."})
         else:
             msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.JOIN_ROOM, "", Words.Result.ERROR, {Words.DataParamKey.MESSAGE: "Database error."})
-        
+
+    def help_spectate_room(self, params: dict, msgfmt_passer: MessageFormatPasser) -> None:
+        if self.db_server_passer is None:
+            msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.SPECTATE_ROOM, "", Words.Result.ERROR, {Words.DataParamKey.MESSAGE: "No database server connected."})
+            return
+        if self.mfpassers_username.get(msgfmt_passer) is None:
+            msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.SPECTATE_ROOM, "", Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "User not logged in."})
+            return
+        request_id = str(uuid.uuid4())
+        with self.pending_db_response_lock:
+            self.pending_db_response_dict[request_id] = (False, "", {})
+        self.send_to_database(request_id, Words.Collection.ROOM, Words.Action.ADD_SPECTATOR, {Words.DataParamKey.ROOM_ID: params.get(Words.DataParamKey.ROOM_ID), Words.DataParamKey.USERNAME: self.mfpassers_username[msgfmt_passer]})
+        # Wait for response
+        result, data = self.receive_from_database(request_id)
+        now_room_info = data.get(Words.DataParamKey.NOW_ROOM_INFO, {})
+        if result == Words.Result.SUCCESS:
+            with self.invitation_lock:
+                for invitee, inviter in list(self.invitee_inviter_set_pair):
+                    if invitee == self.mfpassers_username[msgfmt_passer]:
+                        self.invitee_inviter_set_pair.remove((invitee, inviter))
+            msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.SPECTATE_ROOM, "", Words.Result.SUCCESS, {Words.DataParamKey.MESSAGE: "Spectating room successfully.", Words.DataParamKey.NOW_ROOM_INFO: now_room_info})
+            for user in now_room_info.get("users", []):
+                for passer, username in self.mfpassers_username.items():
+                    if username == user and passer != msgfmt_passer:
+                        passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.EVENT, "", Words.EventType.USER_JOINED, "", {Words.DataParamKey.USERNAME: self.mfpassers_username[msgfmt_passer], Words.DataParamKey.NOW_ROOM_INFO: now_room_info})
+            for spectator in now_room_info.get("spectators", []):
+                for passer, username in self.mfpassers_username.items():
+                    if username == spectator and passer != msgfmt_passer:
+                        passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.EVENT, "", Words.EventType.USER_JOINED, "", {Words.DataParamKey.USERNAME: self.mfpassers_username[msgfmt_passer], Words.DataParamKey.NOW_ROOM_INFO: now_room_info})
+        elif result == Words.Result.FAILURE:
+            msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.SPECTATE_ROOM, "", Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "Failed to spectate room."})
+        else:
+            msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.SPECTATE_ROOM, "", Words.Result.ERROR, {Words.DataParamKey.MESSAGE: "Database error."})
+
     def help_start_game(self, params: dict, msgfmt_passer: MessageFormatPasser) -> None:
         if self.db_server_passer is None:
             msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.START_GAME, "", Words.Result.ERROR, {Words.DataParamKey.MESSAGE: "No database server connected."})
@@ -580,6 +648,9 @@ class LobbyServer:
                 msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.START_GAME, "", Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "User not in a room."})
                 return
             
+            
+
+            
             # Notify game server to start game
             request_id = str(uuid.uuid4())
             with self.pending_db_response_lock:
@@ -593,6 +664,12 @@ class LobbyServer:
             owner = data.get(Words.DataParamKey.OWNER)
             if owner != self.mfpassers_username[msgfmt_passer]:
                 msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.START_GAME, "", Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "Only the room owner can start the game."})
+                return
+            
+            # if player < 2, cannot start game
+            users = data.get(Words.DataParamKey.USERS, [])
+            if len(users) < 2:
+                msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.START_GAME, "", Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "Not enough players to start the game."})
                 return
             # Here you would add logic to notify the game server to start the game
             # attempt to start a new game server for the room by tuning port numbers
@@ -631,11 +708,17 @@ class LobbyServer:
                 print(f"Warning: Failed to update room playing status for room {current_room_id}")
 
             msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.START_GAME, "", Words.Result.SUCCESS, {Words.DataParamKey.MESSAGE: "Game started successfully."})
+            
             for user in data.get(Words.DataParamKey.USERS, []):
                 for passer, username in self.mfpassers_username.items():
                     if username == user:
                         with self.game_server_lock:
                             passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.EVENT, "", Words.EventType.CONNECT_TO_GAME_SERVER, "", {Words.DataParamKey.PORT: self.game_servers[current_room_id].port})
+            for spectator in data.get(Words.DataParamKey.SPECTATORS, []):
+                for passer, username in self.mfpassers_username.items():
+                    if username == spectator:
+                        with self.game_server_lock:
+                            passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.EVENT, "", Words.EventType.CONNECT_TO_GAME_SERVER_AS_SPECTATOR, "", {Words.DataParamKey.PORT: self.game_servers[current_room_id].port})
         elif result == Words.Result.NOT_FOUND:
             msgfmt_passer.send_args(Protocols.LobbyToClient.MESSAGE, Words.MessageType.RESPONSE, Words.Command.START_GAME, "", Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "User not found."})
         else:

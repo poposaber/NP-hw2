@@ -162,7 +162,8 @@ class DatabaseServer:
                             Words.DataParamKey.OWNER: owner,
                             Words.DataParamKey.SETTINGS: settings,
                             Words.DataParamKey.IS_PLAYING: False,
-                            Words.DataParamKey.USERS: users
+                            Words.DataParamKey.USERS: users,
+                            Words.DataParamKey.SPECTATORS: []
                         }
                         self.room_db[room_id_str] = room_info
                         self.save_room_db()
@@ -212,24 +213,47 @@ class DatabaseServer:
                             self.user_db[username][Words.DataParamKey.CURRENT_ROOM_ID] = room_id
                             self.save_user_db()
                             self.send_response(request_id, Words.Result.SUCCESS, {Words.DataParamKey.MESSAGE: "User added to room successfully.", Words.DataParamKey.ROOM_ID: room_id, Words.DataParamKey.NOW_ROOM_INFO: room_info})
-
+                    case Words.Action.ADD_SPECTATOR:
+                        room_id = data.get(Words.DataParamKey.ROOM_ID)
+                        username = data.get(Words.DataParamKey.USERNAME)
+                        room_info = self.room_db.get(room_id)
+                        if room_info is None:
+                            self.send_response(request_id, Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "Room not found."})
+                        elif username in room_info[Words.DataParamKey.SPECTATORS]:
+                            self.send_response(request_id, Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "User already spectating in room."})
+                        elif self.user_db[username][Words.DataParamKey.CURRENT_ROOM_ID] is not None:
+                            self.send_response(request_id, Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "User already in another room."})
+                        elif self.user_db[username][Words.DataParamKey.ONLINE] is False:
+                            self.send_response(request_id, Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "User is not online."})
+                        else:
+                            room_info[Words.DataParamKey.SPECTATORS].append(username)
+                            self.save_room_db()
+                            self.user_db[username][Words.DataParamKey.CURRENT_ROOM_ID] = room_id
+                            self.save_user_db()
+                            self.send_response(request_id, Words.Result.SUCCESS, {Words.DataParamKey.MESSAGE: "User added as spectator to room successfully.", Words.DataParamKey.ROOM_ID: room_id, Words.DataParamKey.NOW_ROOM_INFO: room_info})
                     case Words.Action.REMOVE_USER:
                         room_id = data.get(Words.DataParamKey.ROOM_ID)
                         username = data.get(Words.DataParamKey.USERNAME)
                         room_info = self.room_db.get(room_id)
                         if room_info is None:
                             self.send_response(request_id, Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "Room not found."})
-                        elif username not in room_info[Words.DataParamKey.USERS]:
+                        elif username not in room_info[Words.DataParamKey.USERS] and username not in room_info[Words.DataParamKey.SPECTATORS]:
                             self.send_response(request_id, Words.Result.FAILURE, {Words.DataParamKey.MESSAGE: "User not in room."})
                         else:
                             room_info[Words.DataParamKey.ROOM_ID] = room_id  # include room_id in the info sent back
-                            room_info[Words.DataParamKey.USERS].remove(username)
-                            if room_info[Words.DataParamKey.OWNER] == username:
-                                if room_info[Words.DataParamKey.USERS]:
-                                    room_info[Words.DataParamKey.OWNER] = room_info[Words.DataParamKey.USERS][0]
-                                else: # no users left, delete room
-                                    room_info[Words.DataParamKey.OWNER] = None
-                                    del self.room_db[room_id]
+                            if username in room_info[Words.DataParamKey.SPECTATORS]:
+                                room_info[Words.DataParamKey.SPECTATORS].remove(username)
+                            else: # username in room_info[Words.DataParamKey.USERS]
+                                room_info[Words.DataParamKey.USERS].remove(username)
+                                if room_info[Words.DataParamKey.OWNER] == username:
+                                    if room_info[Words.DataParamKey.USERS]:
+                                        room_info[Words.DataParamKey.OWNER] = room_info[Words.DataParamKey.USERS][0]
+                                    else: # no users left, delete room
+                                        room_info[Words.DataParamKey.OWNER] = None
+                                        # no user => delete room. But maybe there are spectators?
+                                        for spectator in room_info[Words.DataParamKey.SPECTATORS]:
+                                            self.user_db[spectator][Words.DataParamKey.CURRENT_ROOM_ID] = None
+                                        del self.room_db[room_id]
                             self.save_room_db()
                             self.user_db[username][Words.DataParamKey.CURRENT_ROOM_ID] = None
                             self.save_user_db()
