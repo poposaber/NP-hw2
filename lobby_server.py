@@ -1,12 +1,8 @@
-# next objective:
-# - add spectator mode
-
 from message_format_passer import MessageFormatPasser
 from protocols import Protocols, Words
 import threading
 import socket
 import time
-import queue
 import uuid
 import random
 from game_server import GameServer
@@ -137,15 +133,21 @@ class LobbyServer:
                         else:
                             print(f"Failed to record game result for {loser_username}.")
 
-                        # set is_playing to False for room
-                        request_id = str(uuid.uuid4())
-                        with self.pending_db_response_lock:
-                            self.pending_db_response_dict[request_id] = (False, "", {})
-                        self.send_to_database(request_id, Words.Collection.ROOM, Words.Action.UPDATE, {Words.DataParamKey.ROOM_ID: room_id, "is_playing": False})
+                        
+                        
 
                         self.game_server_win_recorded[room_id] = True
                     
                     if not game_server.running.is_set():
+                        # set is_playing to False for room
+                        request_id = str(uuid.uuid4())
+                        with self.pending_db_response_lock:
+                            self.pending_db_response_dict[request_id] = (False, "", {})
+                        self.send_to_database(request_id, Words.Collection.ROOM, Words.Action.UPDATE, {Words.DataParamKey.ROOM_ID: room_id, Words.DataParamKey.IS_PLAYING: False})
+                        # wait for response
+                        result, _ = self.receive_from_database(request_id)
+                        if result == Words.Result.SUCCESS:
+                            print(f"Set is_playing to False for room {room_id} successfully.")
                         # Game server has stopped, clean up
                         print(f"Cleaning up game server for room {room_id}.")
                         if room_id in self.game_server_threads:

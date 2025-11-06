@@ -1,5 +1,3 @@
-
-
 from message_format_passer import MessageFormatPasser
 from protocols import Protocols, Words
 from game import Game
@@ -157,6 +155,7 @@ class GameServer:
                     return
                 except Exception as e:
                     print(f"Error handling spectator queue: {e}")
+            passer.close()
 
         except Exception as e:
             print(f"Error handling spectator: {e}")

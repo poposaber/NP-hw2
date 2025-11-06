@@ -1,6 +1,6 @@
 from player import Player
 from tetris import Tetris
-from protocols import Protocols, Words
+from protocols import Words
 
 class Game:
     def __init__(self, seed: int) -> None:

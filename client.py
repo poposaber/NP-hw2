@@ -1,15 +1,11 @@
 from message_format_passer import MessageFormatPasser
 from protocols import Protocols, Words
 from user_info import UserInfo
-from tetris import Tetris
 from game_window import GameWindow
 import threading
 import queue
 import getpass
-import sys
-import os
 import time
-import random
 
 class Client:
     def __init__(self) -> None:
@@ -492,7 +488,12 @@ class Client:
             return
         
         print("viewing game...")
-        self.game_msgfmt_passer.send_args(Protocols.PlayerToGameServer.GAME_ACTION, Words.GameAction.READY, {})
+        try:
+            self.game_msgfmt_passer.send_args(Protocols.PlayerToGameServer.GAME_ACTION, Words.GameAction.READY, {})
+        except Exception as e:
+            print(f"Error sending READY action to game server: {e}")
+            self.game_msgfmt_passer.close()
+            return
         self.game_window = GameWindow(game_server_passer=self.game_msgfmt_passer, player_id=self.player_id) # in spectator mode, self.player_id == 'spectator'
         self.listen_game_thread = threading.Thread(target=self.listen_for_game_messages)
         self.listen_game_thread.start()
@@ -510,27 +511,37 @@ class Client:
         if self.game_window is None:
             print("Game window is not initialized.")
             return
-        result, message, player1_username, player2_username, player_health, now_piece, next_pieces, goal_score = self.game_msgfmt_passer.receive_args(Protocols.GameServerToPlayer.GAME_START_RESULT)
-        if result != Words.Result.SUCCESS:
-            print(f"Failed to start game: {message}")
-            with self.game_window.game_update_lock:
-                self.game_window.game_update_temp['data'] = {'game_over': True, 'message': message}
-            return
-        self.game_window.init_player_info(player1_username, player2_username, player_health, now_piece, next_pieces, goal_score)
-        while True:
-            try:
-                state1, state2, data = self.game_msgfmt_passer.receive_args(Protocols.GameServerToPlayer.GAME_UPDATE)
+        
+        try:
+            result, message, player1_username, player2_username, player_health, now_piece, next_pieces, goal_score = self.game_msgfmt_passer.receive_args(Protocols.GameServerToPlayer.GAME_START_RESULT)
+            if result != Words.Result.SUCCESS:
+                print(f"Failed to start game: {message}")
                 with self.game_window.game_update_lock:
-                    self.game_window.game_update_temp['state1'] = state1
-                    self.game_window.game_update_temp['state2'] = state2
-                    self.game_window.game_update_temp['data'] = data
-                if 'game_over' in data:
+                    self.game_window.game_update_temp['data'] = {'game_over': True, 'message': message}
+                return
+            self.game_window.init_player_info(player1_username, player2_username, player_health, now_piece, next_pieces, goal_score)
+            while True:
+                try:
+                    state1, state2, data = self.game_msgfmt_passer.receive_args(Protocols.GameServerToPlayer.GAME_UPDATE)
+                    with self.game_window.game_update_lock:
+                        self.game_window.game_update_temp['state1'] = state1
+                        self.game_window.game_update_temp['state2'] = state2
+                        self.game_window.game_update_temp['data'] = data
+                    if 'game_over' in data:
+                        break
+                except TimeoutError:
+                    continue
+                except Exception as e:
+                    print(f"Error listening for game messages: {e}")
+                    self.game_window.running = False
                     break
-            except TimeoutError:
-                continue
-            except Exception as e:
-                print(f"Error listening for game messages: {e}")
-                break
+        except Exception as e:
+            print(f"Error in game message listener: {e}")
+            self.game_window.running = False
+            try:
+                self.game_msgfmt_passer.close()
+            except Exception:
+                pass
 
     def get_input(self):
         while not self.shutdown_event.is_set():
